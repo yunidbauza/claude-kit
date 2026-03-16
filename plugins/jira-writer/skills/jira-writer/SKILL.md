@@ -1,18 +1,30 @@
 ---
 name: jira-writer
-description: Create and update Jira Cloud tickets with rich content, including automatic Mermaid diagram embedding
+description: Read, search, create, and update Jira Cloud tickets — fetch issue details, search with JQL, list projects, look up users, and write rich content with automatic Mermaid diagram embedding
 ---
 
 # Jira Writer Skill
 
 ## Overview
 
-This skill enables creating and modifying Jira Cloud tickets with rich content. When content includes Mermaid diagram code blocks, diagrams are automatically converted to PNG images and embedded in the ticket description.
+This skill enables reading, searching, creating, and modifying Jira Cloud tickets. You can fetch issue details, search with JQL queries, list projects and issue types, look up users, and view issue transitions. When writing content that includes Mermaid diagram code blocks, diagrams are automatically converted to PNG images and embedded in the ticket description.
 
 ### Capabilities
 
+#### Read & Search
+- Fetch issue details by key (summary, description, status, assignee, etc.)
+- Search issues using JQL queries
+- List visible Jira projects
+- Get available issue types for a project
+- Get available status transitions for an issue
+- Look up Jira users by name or email
+- Get remote/linked issues for a ticket
+
+#### Create & Update
 - Create new Jira tickets with structured content
 - Update existing ticket descriptions (append, replace, or insert at location)
+- Add comments to existing tickets
+- Transition issue status
 - Parse markdown files and convert to Jira-compatible ADF
 - Automatically detect and convert Mermaid diagrams to embedded images
 - Batch processing for multiple diagrams in a single request
@@ -21,8 +33,11 @@ This skill enables creating and modifying Jira Cloud tickets with rich content. 
 
 This skill activates contextually when:
 
-- User asks to create a Jira ticket
-- User asks to update/modify a Jira ticket description
+- User asks to **read, view, fetch, or get** a Jira issue (e.g., "show me PROJ-123", "what's the status of PROJ-456")
+- User asks to **search or find** Jira issues (e.g., "find open bugs in PROJECT", "search Jira for...")
+- User asks to **list projects**, **look up users**, or **check issue types**
+- User asks to **create** a Jira ticket
+- User asks to **update/modify** a Jira ticket description
 - User provides content (text or markdown file) to write to a Jira ticket
 - Content contains ` ```mermaid ``` ` code blocks that need embedding
 
@@ -956,3 +971,37 @@ Common usage patterns for this skill.
    - issueTypeName: "Task"
    - summary: "Refactor database connection pool"
    - description: (markdown text - MCP handles conversion)
+
+---
+
+### Example 8: Fetch Issue Details
+
+**User request:**
+> "Show me the details of PROJ-123"
+
+**Skill execution:**
+1. Run: `./scripts/jira-api-wrapper.sh get_issue PROJ-123`
+2. Parse response and present summary, status, assignee, description, etc.
+
+---
+
+### Example 9: Search Issues with JQL
+
+**User request:**
+> "Find all open bugs assigned to me in PROJECT"
+
+**Skill execution:**
+1. Build JQL: `project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()`
+2. Run: `./scripts/jira-api-wrapper.sh search_jql "project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()"`
+3. Present results in a readable format
+
+---
+
+### Example 10: List Projects
+
+**User request:**
+> "What Jira projects do I have access to?"
+
+**Skill execution:**
+1. Run: `./scripts/jira-api-wrapper.sh get_projects`
+2. Present project list with keys and names

@@ -1,14 +1,14 @@
 {
   "name": "jira-writer",
   "version": "1.0.0",
-  "description": "Create and update Jira Cloud tickets with rich content, including automatic Mermaid diagram embedding",
+  "description": "Read, search, create, and update Jira Cloud tickets — fetch issue details, search with JQL, list projects, look up users, and write rich content with automatic Mermaid diagram embedding",
   "author": {
     "name": "Yunid Bauza",
     "url": "https://github.com/yunidbauza/claude-kit"
   },
   "repository": "https://github.com/yunidbauza/claude-kit",
   "license": "MIT",
-  "keywords": ["jira", "mermaid", "diagrams", "atlassian", "tickets"],
+  "keywords": ["jira", "mermaid", "diagrams", "atlassian", "tickets", "jql", "search", "fetch", "read"],
   "skills": ["./skills/"]
 }
   
