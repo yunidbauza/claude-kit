@@ -76,7 +76,7 @@ main() {
         # Call single upload script
         local result
         local json_result
-        if result=$("$SCRIPT_DIR/jira-mermaid-upload.sh" "$issue_key" "$code" "$filename" 2>&2); then
+        if result=$("$SCRIPT_DIR/jira-mermaid-upload.sh" "$issue_key" "$code" "$filename" 2>&1); then
             # Extract JSON from output (mmdc outputs noise to stdout before the JSON)
             json_result=$(echo "$result" | awk '/^\{/,/^\}/')
             result=$(echo "$json_result" | jq '. + {success: true}')

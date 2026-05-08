@@ -60,6 +60,7 @@ _jira_cleanup_cache() {
 # Get cached value or return empty
 _jira_cache_get() {
     local key="$1"
+    key="${key//[^a-zA-Z0-9_]/_}"
     local cache_file="$JIRA_CACHE_DIR/$key"
     if [[ -f "$cache_file" ]]; then
         cat "$cache_file"
@@ -71,9 +72,10 @@ _jira_cache_get() {
 # Set cache value
 _jira_cache_set() {
     local key="$1"
+    key="${key//[^a-zA-Z0-9_]/_}"
     local value="$2"
     _jira_init_cache
-    echo "$value" > "$JIRA_CACHE_DIR/$key"
+    printf '%s\n' "$value" > "$JIRA_CACHE_DIR/$key"
 }
 
 # --- Authentication ---

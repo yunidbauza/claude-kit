@@ -305,6 +305,7 @@ op_transition_issue() {
 op_search_jql() {
     local jql="$1"
     local max_results="${2:-50}"
+    [[ "$max_results" =~ ^[0-9]+$ ]] || max_results=50
 
     # Check REST availability
     if ! check_rest_available; then
@@ -326,6 +327,7 @@ op_search_jql() {
 # Get projects operation
 op_get_projects() {
     local max_results="${1:-50}"
+    [[ "$max_results" =~ ^[0-9]+$ ]] || max_results=50
 
     # Check REST availability
     if ! check_rest_available; then
@@ -429,14 +431,16 @@ op_upload_attachment() {
     fi
 
     # Try REST API
-    local result
+    local result rc
     if [[ -n "$filename" ]]; then
         result=$(jira_upload_attachment "$issue_key" "$file_path" "$filename" 2>&1)
+        rc=$?
     else
         result=$(jira_upload_attachment "$issue_key" "$file_path" 2>&1)
+        rc=$?
     fi
 
-    if [[ $? -eq 0 ]]; then
+    if [[ $rc -eq 0 ]]; then
         output_rest_success "$result"
         return 0
     else

@@ -126,7 +126,7 @@ main() {
     # Create temp directory
     local temp_dir
     temp_dir=$(mktemp -d)
-    trap "rm -rf $temp_dir" EXIT
+    trap 'rm -rf "$temp_dir"' EXIT
 
     local mmd_file="$temp_dir/diagram.mmd"
     local png_file="$temp_dir/$output_filename"
