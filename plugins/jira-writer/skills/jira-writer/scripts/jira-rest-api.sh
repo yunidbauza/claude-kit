@@ -2,15 +2,12 @@
 #
 # jira-rest-api.sh
 #
-# Core Jira REST API functions for direct API access.
-# This is the PRIMARY method for Jira operations, with MCP as fallback.
+# Core Jira REST API functions. Source-only library — not directly
+# invokable. All CLI access goes through jira-api-wrapper.sh.
 #
-# Usage:
-#   source ./jira-rest-api.sh
+# Usage (from jira-api-wrapper.sh):
+#   source "$SCRIPT_DIR/jira-rest-api.sh"
 #   jira_get_issue "PROJ-123"
-#
-# Or as standalone:
-#   ./jira-rest-api.sh <function_name> [args...]
 #
 # Environment Variables (required):
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
