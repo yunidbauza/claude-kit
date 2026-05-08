@@ -536,72 +536,108 @@ print_usage() {
     echo "  Fallback: {\"api\": \"mcp_fallback\", \"operation\": \"...\", \"params\": {...}}" >&2
 }
 
-if [[ $# -lt 1 ]]; then
-    print_usage
-    exit 1
-fi
+# --- Operation name normalization ---
 
-operation="$1"
-shift
+# Canonical operation names. Order matters for suggest_op output.
+KNOWN_OPS=(
+    get_issue
+    create_issue
+    update_issue
+    add_comment
+    get_transitions
+    transition_issue
+    search_jql
+    get_projects
+    get_issue_types
+    lookup_user
+    add_worklog
+    upload_attachment
+    get_remote_links
+    test_connection
+)
 
-case "$operation" in
-    get_issue)
-        [[ $# -lt 1 ]] && { echo "Error: get_issue requires issue key" >&2; exit 1; }
-        op_get_issue "$@"
-        ;;
-    create_issue)
-        [[ $# -lt 3 ]] && { echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2; exit 1; }
-        op_create_issue "$@"
-        ;;
-    update_issue)
-        [[ $# -lt 2 ]] && { echo "Error: update_issue requires KEY FIELDS_JSON" >&2; exit 1; }
-        op_update_issue "$@"
-        ;;
-    add_comment)
-        [[ $# -lt 2 ]] && { echo "Error: add_comment requires KEY BODY" >&2; exit 1; }
-        op_add_comment "$@"
-        ;;
-    get_transitions)
-        [[ $# -lt 1 ]] && { echo "Error: get_transitions requires issue key" >&2; exit 1; }
-        op_get_transitions "$@"
-        ;;
-    transition_issue)
-        [[ $# -lt 2 ]] && { echo "Error: transition_issue requires KEY TRANSITION_ID" >&2; exit 1; }
-        op_transition_issue "$@"
-        ;;
-    search_jql)
-        [[ $# -lt 1 ]] && { echo "Error: search_jql requires JQL query" >&2; exit 1; }
-        op_search_jql "$@"
-        ;;
-    get_projects)
-        op_get_projects "$@"
-        ;;
-    get_issue_types)
-        [[ $# -lt 1 ]] && { echo "Error: get_issue_types requires project key" >&2; exit 1; }
-        op_get_issue_types "$@"
-        ;;
-    lookup_user)
-        [[ $# -lt 1 ]] && { echo "Error: lookup_user requires query" >&2; exit 1; }
-        op_lookup_user "$@"
-        ;;
-    add_worklog)
-        [[ $# -lt 2 ]] && { echo "Error: add_worklog requires KEY TIME_SPENT" >&2; exit 1; }
-        op_add_worklog "$@"
-        ;;
-    upload_attachment)
-        [[ $# -lt 2 ]] && { echo "Error: upload_attachment requires KEY FILE" >&2; exit 1; }
-        op_upload_attachment "$@"
-        ;;
-    get_remote_links)
-        [[ $# -lt 1 ]] && { echo "Error: get_remote_links requires issue key" >&2; exit 1; }
-        op_get_remote_links "$@"
-        ;;
-    test_connection)
-        op_test_connection
-        ;;
-    *)
-        echo "Error: Unknown operation '$operation'" >&2
+# normalize_op INPUT
+# Stub: returns input unchanged. Real aliases land in Task 4.
+normalize_op() {
+    printf '%s\n' "$1"
+}
+
+# suggest_op INPUT
+# Returns up to 2 canonical ops most similar to INPUT, comma-separated.
+# Stub: returns first two known ops. Real ranking lands in Task 5.
+suggest_op() {
+    printf '%s, %s\n' "${KNOWN_OPS[0]}" "${KNOWN_OPS[1]}"
+}
+
+# Only run dispatch when invoked directly (not sourced for testing).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]; then
+    if [[ $# -lt 1 ]]; then
         print_usage
         exit 1
-        ;;
-esac
+    fi
+
+    operation="$1"
+    shift
+
+    case "$operation" in
+        get_issue)
+            [[ $# -lt 1 ]] && { echo "Error: get_issue requires issue key" >&2; exit 1; }
+            op_get_issue "$@"
+            ;;
+        create_issue)
+            [[ $# -lt 3 ]] && { echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2; exit 1; }
+            op_create_issue "$@"
+            ;;
+        update_issue)
+            [[ $# -lt 2 ]] && { echo "Error: update_issue requires KEY FIELDS_JSON" >&2; exit 1; }
+            op_update_issue "$@"
+            ;;
+        add_comment)
+            [[ $# -lt 2 ]] && { echo "Error: add_comment requires KEY BODY" >&2; exit 1; }
+            op_add_comment "$@"
+            ;;
+        get_transitions)
+            [[ $# -lt 1 ]] && { echo "Error: get_transitions requires issue key" >&2; exit 1; }
+            op_get_transitions "$@"
+            ;;
+        transition_issue)
+            [[ $# -lt 2 ]] && { echo "Error: transition_issue requires KEY TRANSITION_ID" >&2; exit 1; }
+            op_transition_issue "$@"
+            ;;
+        search_jql)
+            [[ $# -lt 1 ]] && { echo "Error: search_jql requires JQL query" >&2; exit 1; }
+            op_search_jql "$@"
+            ;;
+        get_projects)
+            op_get_projects "$@"
+            ;;
+        get_issue_types)
+            [[ $# -lt 1 ]] && { echo "Error: get_issue_types requires project key" >&2; exit 1; }
+            op_get_issue_types "$@"
+            ;;
+        lookup_user)
+            [[ $# -lt 1 ]] && { echo "Error: lookup_user requires query" >&2; exit 1; }
+            op_lookup_user "$@"
+            ;;
+        add_worklog)
+            [[ $# -lt 2 ]] && { echo "Error: add_worklog requires KEY TIME_SPENT" >&2; exit 1; }
+            op_add_worklog "$@"
+            ;;
+        upload_attachment)
+            [[ $# -lt 2 ]] && { echo "Error: upload_attachment requires KEY FILE" >&2; exit 1; }
+            op_upload_attachment "$@"
+            ;;
+        get_remote_links)
+            [[ $# -lt 1 ]] && { echo "Error: get_remote_links requires issue key" >&2; exit 1; }
+            op_get_remote_links "$@"
+            ;;
+        test_connection)
+            op_test_connection
+            ;;
+        *)
+            echo "Error: Unknown operation '$operation'" >&2
+            print_usage
+            exit 1
+            ;;
+    esac
+fi
