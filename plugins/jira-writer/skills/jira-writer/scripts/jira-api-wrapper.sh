@@ -624,10 +624,57 @@ normalize_op() {
 }
 
 # suggest_op INPUT
-# Returns up to 2 canonical ops most similar to INPUT, comma-separated.
-# Stub: returns first two known ops. Real ranking lands in Task 5.
+# Prints the 2 canonical ops most similar to INPUT, comma-separated.
+# Ranking: shared prefix length DESC, then substring containment, then
+#          common character count, then length closeness (penalty for
+#          length difference so shorter/exact-length ops win ties).
 suggest_op() {
-    printf '%s, %s\n' "${KNOWN_OPS[0]}" "${KNOWN_OPS[1]}"
+    local input="$1"
+    local op prefix_len
+    local len_input=${#input}
+
+    # Build "score op" lines, sort, take top 2.
+    local scored=""
+    for op in "${KNOWN_OPS[@]}"; do
+        # Shared prefix length (weight: *100 to dominate).
+        prefix_len=0
+        local i max=${#input}
+        [[ ${#op} -lt $max ]] && max=${#op}
+        for ((i = 0; i < max; i++)); do
+            [[ "${input:$i:1}" == "${op:$i:1}" ]] || break
+            prefix_len=$((prefix_len + 1))
+        done
+
+        # Substring bonus (weight: *50).
+        local substring_bonus=0
+        if [[ "$op" == *"$input"* ]] || [[ -n "$input" && "$input" == *"$op"* ]]; then
+            substring_bonus=50
+        fi
+
+        # Common character count — count chars in input present in op (weight: *1).
+        local char_score=0
+        local remaining="$op"
+        for ((i = 0; i < ${#input}; i++)); do
+            local ch="${input:$i:1}"
+            if [[ "$remaining" == *"$ch"* ]]; then
+                char_score=$((char_score + 1))
+                # Remove first occurrence so each char counts once.
+                remaining="${remaining/$ch/}"
+            fi
+        done
+
+        # Length-delta penalty: subtract abs(len(op) - len(input)) to break
+        # ties in favour of ops closest in length to the input.
+        local len_op=${#op}
+        local len_delta=$((len_input - len_op))
+        [[ $len_delta -lt 0 ]] && len_delta=$((-len_delta))
+
+        local score=$((prefix_len * 100 + substring_bonus + char_score - len_delta))
+        scored+=$(printf '%d %s\n' "$score" "$op")$'\n'
+    done
+
+    # Sort numerically in reverse, take top 2 op names.
+    printf '%s' "$scored" | sort -k1,1nr | head -n 2 | awk '{print $2}' | paste -sd, -
 }
 
 # Only run dispatch when invoked directly (not sourced for testing).
@@ -697,9 +744,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             op_test_connection
             ;;
         *)
-            echo "Error: Unknown operation '$operation'" >&2
-            print_usage
-            exit 1
+            suggestion="$(suggest_op "$operation")"
+            echo "Unknown operation '$operation'." >&2
+            if [[ -n "$suggestion" ]]; then
+                echo "Did you mean: ${suggestion}?" >&2
+            fi
+            echo "Run with no arguments to see full usage." >&2
+            exit 2
             ;;
     esac
 fi

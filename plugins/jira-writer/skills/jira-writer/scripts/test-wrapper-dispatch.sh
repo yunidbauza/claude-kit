@@ -75,7 +75,8 @@ assert_eq "alias test -> test_connection" "test_connection" "$(normalize_op test
 assert_eq "unknown op passes through unchanged" "notarealop" "$(normalize_op notarealop)"
 
 # --- suggest_op: returns at least one canonical op for typo ---
-assert_contains "suggest_op get_isue includes get_issue" "get_issue" "$(suggest_op get_isue)"
+first_suggestion="$(suggest_op get_isue | cut -d',' -f1 | tr -d '[:space:]')"
+assert_eq "suggest_op get_isue first suggestion is get_issue" "get_issue" "$first_suggestion"
 assert_contains "suggest_op projct includes get_projects" "get_projects" "$(suggest_op projct)"
 
 # --- summary ---
