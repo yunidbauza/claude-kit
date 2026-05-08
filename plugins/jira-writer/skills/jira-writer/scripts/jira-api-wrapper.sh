@@ -557,8 +557,69 @@ KNOWN_OPS=(
 )
 
 # normalize_op INPUT
-# Stub: returns input unchanged. Real aliases land in Task 4.
+# Returns the canonical operation name for INPUT.
+# Resolution order:
+#   1. Already canonical -> return as-is.
+#   2. Strip leading "jira_" prefix.
+#   3. Convert camelCase to snake_case.
+#   4. Map verb-only aliases to canonical ops.
+#   5. Unknown -> return input unchanged (caller decides).
 normalize_op() {
+    local op="$1"
+
+    # 1. Canonical match.
+    local known
+    for known in "${KNOWN_OPS[@]}"; do
+        if [[ "$op" == "$known" ]]; then
+            printf '%s\n' "$op"
+            return 0
+        fi
+    done
+
+    # 2. Strip leading "jira_" prefix.
+    if [[ "$op" == jira_* ]]; then
+        local stripped="${op#jira_}"
+        for known in "${KNOWN_OPS[@]}"; do
+            if [[ "$stripped" == "$known" ]]; then
+                printf '%s\n' "$stripped"
+                return 0
+            fi
+        done
+        op="$stripped"
+    fi
+
+    # 3. camelCase -> snake_case (insert _ before each upper, then lowercase).
+    if [[ "$op" =~ [A-Z] ]]; then
+        local snake
+        snake=$(printf '%s' "$op" | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g' | tr '[:upper:]' '[:lower:]')
+        for known in "${KNOWN_OPS[@]}"; do
+            if [[ "$snake" == "$known" ]]; then
+                printf '%s\n' "$snake"
+                return 0
+            fi
+        done
+        op="$snake"
+    fi
+
+    # 4. Verb-only aliases.
+    case "$op" in
+        issue|get)              printf 'get_issue\n'; return 0 ;;
+        create)                 printf 'create_issue\n'; return 0 ;;
+        update)                 printf 'update_issue\n'; return 0 ;;
+        comment)                printf 'add_comment\n'; return 0 ;;
+        search|jql)             printf 'search_jql\n'; return 0 ;;
+        projects)               printf 'get_projects\n'; return 0 ;;
+        types|issue_types)      printf 'get_issue_types\n'; return 0 ;;
+        transitions)            printf 'get_transitions\n'; return 0 ;;
+        transition)             printf 'transition_issue\n'; return 0 ;;
+        user|users|lookup)      printf 'lookup_user\n'; return 0 ;;
+        worklog)                printf 'add_worklog\n'; return 0 ;;
+        attach|attachment|upload) printf 'upload_attachment\n'; return 0 ;;
+        links|remote_links)     printf 'get_remote_links\n'; return 0 ;;
+        test|ping)              printf 'test_connection\n'; return 0 ;;
+    esac
+
+    # 5. Unknown — return input unchanged.
     printf '%s\n' "$1"
 }
 
@@ -578,6 +639,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
 
     operation="$1"
     shift
+    operation="$(normalize_op "$operation")"
 
     case "$operation" in
         get_issue)
