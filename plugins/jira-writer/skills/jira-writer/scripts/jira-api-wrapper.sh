@@ -430,14 +430,14 @@ op_upload_attachment() {
         return 1
     fi
 
-    # Try REST API
+    # Try REST API.
+    # NOTE: the && / || pattern is treated as a conditional under `set -e`,
+    # so a failing upload doesn't exit the script before we capture rc.
     local result rc
     if [[ -n "$filename" ]]; then
-        result=$(jira_upload_attachment "$issue_key" "$file_path" "$filename" 2>&1)
-        rc=$?
+        result=$(jira_upload_attachment "$issue_key" "$file_path" "$filename" 2>&1) && rc=0 || rc=$?
     else
-        result=$(jira_upload_attachment "$issue_key" "$file_path" 2>&1)
-        rc=$?
+        result=$(jira_upload_attachment "$issue_key" "$file_path" 2>&1) && rc=0 || rc=$?
     fi
 
     if [[ $rc -eq 0 ]]; then
