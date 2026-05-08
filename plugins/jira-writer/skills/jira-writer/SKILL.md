@@ -205,6 +205,9 @@ All operations go through `jira-api-wrapper.sh`. The low-level functions in `jir
 # Add comment
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment PROJ-123 "This is a comment"
 
+# Add worklog
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_worklog PROJ-123 "2h"
+
 # Transitions
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_transitions PROJ-123
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" transition_issue PROJ-123 TRANSITION_ID
@@ -212,6 +215,8 @@ All operations go through `jira-api-wrapper.sh`. The low-level functions in `jir
 # Upload attachment
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" upload_attachment PROJ-123 /path/to/file.png
 ```
+
+**Aliases:** The wrapper accepts the canonical op names listed above plus common variants — verb-only forms (`issue`, `create`, `comment`, `search`, `projects`), camelCase (`getIssue`), and `jira_`-prefixed names (`jira_get_issue`). Unknown ops exit 2 with a "Did you mean: …" suggestion.
 
 #### Diagnostic Scripts
 
@@ -758,6 +763,7 @@ How to handle errors at each stage.
 | Attachment upload | Other error | RETRY once; if fails, skip with warning |
 | Description update | REST error | TRY MCP fallback (for simple content); ROLLBACK attachments; report error |
 | Section detection | Section not found | ASK user for clarification |
+| Wrapper exit 2 | Unknown operation | Suggestion shown; check op name or run with no args |
 
 ### Rollback Procedure
 
@@ -766,7 +772,7 @@ When description update fails after attachments were uploaded:
 ```
 FOR each uploaded attachment_id:
     curl -X DELETE \
-      -H "Authorization: Basic $JIRA_API_KEY" \
+      -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64)" \
       "https://$JIRA_DOMAIN/rest/api/3/attachment/$attachment_id"
 
 REPORT to user:
