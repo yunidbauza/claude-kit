@@ -2,15 +2,12 @@
 #
 # jira-rest-api.sh
 #
-# Core Jira REST API functions for direct API access.
-# This is the PRIMARY method for Jira operations, with MCP as fallback.
+# Core Jira REST API functions. Source-only library — not directly
+# invokable. All CLI access goes through jira-api-wrapper.sh.
 #
-# Usage:
-#   source ./jira-rest-api.sh
+# Usage (from jira-api-wrapper.sh):
+#   source "$SCRIPT_DIR/jira-rest-api.sh"
 #   jira_get_issue "PROJ-123"
-#
-# Or as standalone:
-#   ./jira-rest-api.sh <function_name> [args...]
 #
 # Environment Variables (required):
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
@@ -63,6 +60,7 @@ _jira_cleanup_cache() {
 # Get cached value or return empty
 _jira_cache_get() {
     local key="$1"
+    key="${key//[^a-zA-Z0-9_]/_}"
     local cache_file="$JIRA_CACHE_DIR/$key"
     if [[ -f "$cache_file" ]]; then
         cat "$cache_file"
@@ -74,9 +72,10 @@ _jira_cache_get() {
 # Set cache value
 _jira_cache_set() {
     local key="$1"
+    key="${key//[^a-zA-Z0-9_]/_}"
     local value="$2"
     _jira_init_cache
-    echo "$value" > "$JIRA_CACHE_DIR/$key"
+    printf '%s\n' "$value" > "$JIRA_CACHE_DIR/$key"
 }
 
 # --- Authentication ---
@@ -500,44 +499,3 @@ jira_test_connection() {
         return 1
     fi
 }
-
-# --- Main entry point for CLI usage ---
-
-# If script is run directly (not sourced), execute the specified function
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    if [[ $# -lt 1 ]]; then
-        echo "Usage: $0 <function_name> [args...]" >&2
-        echo "" >&2
-        echo "Available functions:" >&2
-        echo "  jira_get_myself             - Get current user info" >&2
-        echo "  jira_get_issue KEY [fields] - Get issue details" >&2
-        echo "  jira_create_issue JSON      - Create new issue" >&2
-        echo "  jira_update_issue KEY JSON  - Update issue" >&2
-        echo "  jira_add_comment KEY JSON   - Add comment" >&2
-        echo "  jira_get_transitions KEY    - Get available transitions" >&2
-        echo "  jira_transition_issue KEY JSON - Transition issue" >&2
-        echo "  jira_search_jql JQL [max] [fields] - Search with JQL" >&2
-        echo "  jira_get_projects [max]     - Get visible projects" >&2
-        echo "  jira_get_issue_types KEY    - Get issue types for project" >&2
-        echo "  jira_get_field_metadata KEY TYPE_ID - Get field metadata" >&2
-        echo "  jira_lookup_user QUERY      - Search for users" >&2
-        echo "  jira_add_worklog KEY JSON   - Add worklog entry" >&2
-        echo "  jira_upload_attachment KEY FILE [name] - Upload attachment" >&2
-        echo "  jira_delete_attachment ID   - Delete attachment" >&2
-        echo "  jira_get_remote_links KEY   - Get remote links" >&2
-        echo "  jira_test_connection        - Test API connection" >&2
-        exit 1
-    fi
-
-    func_name="$1"
-    shift
-
-    # Check if function exists
-    if ! declare -f "$func_name" > /dev/null 2>&1; then
-        echo "Error: Unknown function '$func_name'" >&2
-        exit 1
-    fi
-
-    # Execute the function with remaining arguments
-    "$func_name" "$@"
-fi

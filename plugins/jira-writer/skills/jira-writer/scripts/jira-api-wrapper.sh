@@ -305,6 +305,7 @@ op_transition_issue() {
 op_search_jql() {
     local jql="$1"
     local max_results="${2:-50}"
+    [[ "$max_results" =~ ^[0-9]+$ ]] || max_results=50
 
     # Check REST availability
     if ! check_rest_available; then
@@ -326,6 +327,7 @@ op_search_jql() {
 # Get projects operation
 op_get_projects() {
     local max_results="${1:-50}"
+    [[ "$max_results" =~ ^[0-9]+$ ]] || max_results=50
 
     # Check REST availability
     if ! check_rest_available; then
@@ -428,15 +430,17 @@ op_upload_attachment() {
         return 1
     fi
 
-    # Try REST API
-    local result
+    # Try REST API.
+    # NOTE: the && / || pattern is treated as a conditional under `set -e`,
+    # so a failing upload doesn't exit the script before we capture rc.
+    local result rc
     if [[ -n "$filename" ]]; then
-        result=$(jira_upload_attachment "$issue_key" "$file_path" "$filename" 2>&1)
+        result=$(jira_upload_attachment "$issue_key" "$file_path" "$filename" 2>&1) && rc=0 || rc=$?
     else
-        result=$(jira_upload_attachment "$issue_key" "$file_path" 2>&1)
+        result=$(jira_upload_attachment "$issue_key" "$file_path" 2>&1) && rc=0 || rc=$?
     fi
 
-    if [[ $? -eq 0 ]]; then
+    if [[ $rc -eq 0 ]]; then
         output_rest_success "$result"
         return 0
     else
@@ -536,72 +540,230 @@ print_usage() {
     echo "  Fallback: {\"api\": \"mcp_fallback\", \"operation\": \"...\", \"params\": {...}}" >&2
 }
 
-if [[ $# -lt 1 ]]; then
-    print_usage
-    exit 1
-fi
+# --- Operation name normalization ---
 
-operation="$1"
-shift
+# Canonical operation names. Order matters for suggest_op output.
+KNOWN_OPS=(
+    get_issue
+    create_issue
+    update_issue
+    add_comment
+    get_transitions
+    transition_issue
+    search_jql
+    get_projects
+    get_issue_types
+    lookup_user
+    add_worklog
+    upload_attachment
+    get_remote_links
+    test_connection
+)
 
-case "$operation" in
-    get_issue)
-        [[ $# -lt 1 ]] && { echo "Error: get_issue requires issue key" >&2; exit 1; }
-        op_get_issue "$@"
-        ;;
-    create_issue)
-        [[ $# -lt 3 ]] && { echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2; exit 1; }
-        op_create_issue "$@"
-        ;;
-    update_issue)
-        [[ $# -lt 2 ]] && { echo "Error: update_issue requires KEY FIELDS_JSON" >&2; exit 1; }
-        op_update_issue "$@"
-        ;;
-    add_comment)
-        [[ $# -lt 2 ]] && { echo "Error: add_comment requires KEY BODY" >&2; exit 1; }
-        op_add_comment "$@"
-        ;;
-    get_transitions)
-        [[ $# -lt 1 ]] && { echo "Error: get_transitions requires issue key" >&2; exit 1; }
-        op_get_transitions "$@"
-        ;;
-    transition_issue)
-        [[ $# -lt 2 ]] && { echo "Error: transition_issue requires KEY TRANSITION_ID" >&2; exit 1; }
-        op_transition_issue "$@"
-        ;;
-    search_jql)
-        [[ $# -lt 1 ]] && { echo "Error: search_jql requires JQL query" >&2; exit 1; }
-        op_search_jql "$@"
-        ;;
-    get_projects)
-        op_get_projects "$@"
-        ;;
-    get_issue_types)
-        [[ $# -lt 1 ]] && { echo "Error: get_issue_types requires project key" >&2; exit 1; }
-        op_get_issue_types "$@"
-        ;;
-    lookup_user)
-        [[ $# -lt 1 ]] && { echo "Error: lookup_user requires query" >&2; exit 1; }
-        op_lookup_user "$@"
-        ;;
-    add_worklog)
-        [[ $# -lt 2 ]] && { echo "Error: add_worklog requires KEY TIME_SPENT" >&2; exit 1; }
-        op_add_worklog "$@"
-        ;;
-    upload_attachment)
-        [[ $# -lt 2 ]] && { echo "Error: upload_attachment requires KEY FILE" >&2; exit 1; }
-        op_upload_attachment "$@"
-        ;;
-    get_remote_links)
-        [[ $# -lt 1 ]] && { echo "Error: get_remote_links requires issue key" >&2; exit 1; }
-        op_get_remote_links "$@"
-        ;;
-    test_connection)
-        op_test_connection
-        ;;
-    *)
-        echo "Error: Unknown operation '$operation'" >&2
+# normalize_op INPUT
+# Returns the canonical operation name for INPUT.
+# Resolution order:
+#   1. Already canonical -> return as-is.
+#   2. Strip leading "jira_" prefix.
+#   3. Convert camelCase to snake_case.
+#   4. Map verb-only aliases to canonical ops.
+#   5. Unknown -> return input unchanged (caller decides).
+normalize_op() {
+    local op="$1"
+
+    # 1. Canonical match.
+    local known
+    for known in "${KNOWN_OPS[@]}"; do
+        if [[ "$op" == "$known" ]]; then
+            printf '%s\n' "$op"
+            return 0
+        fi
+    done
+
+    # 2. Strip leading "jira_" prefix.
+    if [[ "$op" == jira_* ]]; then
+        local stripped="${op#jira_}"
+        for known in "${KNOWN_OPS[@]}"; do
+            if [[ "$stripped" == "$known" ]]; then
+                printf '%s\n' "$stripped"
+                return 0
+            fi
+        done
+        op="$stripped"
+    fi
+
+    # 3. camelCase -> snake_case (insert _ before each upper, then lowercase).
+    if [[ "$op" =~ [A-Z] ]]; then
+        local snake
+        snake=$(printf '%s' "$op" | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g' | tr '[:upper:]' '[:lower:]')
+        for known in "${KNOWN_OPS[@]}"; do
+            if [[ "$snake" == "$known" ]]; then
+                printf '%s\n' "$snake"
+                return 0
+            fi
+        done
+        op="$snake"
+    fi
+
+    # 4. Verb-only aliases.
+    case "$op" in
+        issue|get)              printf 'get_issue\n'; return 0 ;;
+        create)                 printf 'create_issue\n'; return 0 ;;
+        update)                 printf 'update_issue\n'; return 0 ;;
+        comment)                printf 'add_comment\n'; return 0 ;;
+        search|jql)             printf 'search_jql\n'; return 0 ;;
+        projects)               printf 'get_projects\n'; return 0 ;;
+        types|issue_types)      printf 'get_issue_types\n'; return 0 ;;
+        transitions)            printf 'get_transitions\n'; return 0 ;;
+        transition)             printf 'transition_issue\n'; return 0 ;;
+        user|users|lookup)      printf 'lookup_user\n'; return 0 ;;
+        worklog)                printf 'add_worklog\n'; return 0 ;;
+        attach|attachment|upload) printf 'upload_attachment\n'; return 0 ;;
+        links|remote_links)     printf 'get_remote_links\n'; return 0 ;;
+        test|ping)              printf 'test_connection\n'; return 0 ;;
+    esac
+
+    # 5. Unknown — return input unchanged.
+    printf '%s\n' "$1"
+}
+
+# suggest_op INPUT
+# Prints the 2 canonical ops most similar to INPUT, comma-separated.
+# Ranking: shared prefix length DESC, then substring containment, then
+#          common character count, then length closeness (penalty for
+#          length difference so shorter/exact-length ops win ties).
+suggest_op() {
+    local input="$1"
+    local op prefix_len
+    local len_input=${#input}
+
+    # Build "score op" lines, sort, take top 2.
+    local scored=""
+    for op in "${KNOWN_OPS[@]}"; do
+        # Shared prefix length (weight: *100 to dominate).
+        prefix_len=0
+        local i max=${#input}
+        [[ ${#op} -lt $max ]] && max=${#op}
+        for ((i = 0; i < max; i++)); do
+            [[ "${input:$i:1}" == "${op:$i:1}" ]] || break
+            prefix_len=$((prefix_len + 1))
+        done
+
+        # Substring bonus (weight: *50).
+        local substring_bonus=0
+        if [[ "$op" == *"$input"* ]] || [[ -n "$input" && "$input" == *"$op"* ]]; then
+            substring_bonus=50
+        fi
+
+        # Common character count — count chars in input present in op (weight: *1).
+        local char_score=0
+        local remaining="$op"
+        for ((i = 0; i < ${#input}; i++)); do
+            local ch="${input:$i:1}"
+            if [[ "$remaining" == *"$ch"* ]]; then
+                char_score=$((char_score + 1))
+                # Remove first occurrence so each char counts once.
+                remaining="${remaining/$ch/}"
+            fi
+        done
+
+        # Length-delta penalty: subtract abs(len(op) - len(input)) to break
+        # ties in favour of ops closest in length to the input.
+        local len_op=${#op}
+        local len_delta=$((len_input - len_op))
+        [[ $len_delta -lt 0 ]] && len_delta=$((-len_delta))
+
+        local score=$((prefix_len * 100 + substring_bonus + char_score - len_delta))
+        scored+=$(printf '%d %s\n' "$score" "$op")$'\n'
+    done
+
+    # Sort numerically in reverse, take top 2 op names.
+    printf '%s' "$scored" | sort -k1,1nr | head -n 2 | awk '{print $2}' | paste -sd, -
+}
+
+# Only run dispatch when invoked directly (not sourced for testing).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]; then
+    # Plugin-runtime sanity warning.
+    # When invoked from a plugin skill, $CLAUDE_PLUGIN_ROOT should be set
+    # and the script's path should contain /plugins/cache/. If neither is
+    # true, warn (but do not fail) — direct invocations remain valid.
+    if [[ -z "${CLAUDE_PLUGIN_ROOT:-}" ]] && [[ "${BASH_SOURCE[0]}" != *"/plugins/cache/"* ]]; then
+        echo "[WARN] CLAUDE_PLUGIN_ROOT is unset and script is not under /plugins/cache/." >&2
+        echo "[WARN] If you invoked this from a Claude Code skill, the plugin runtime may have changed." >&2
+    fi
+
+    if [[ $# -lt 1 ]]; then
         print_usage
         exit 1
-        ;;
-esac
+    fi
+
+    operation="$1"
+    shift
+    operation="$(normalize_op "$operation")"
+
+    case "$operation" in
+        get_issue)
+            [[ $# -lt 1 ]] && { echo "Error: get_issue requires issue key" >&2; exit 1; }
+            op_get_issue "$@"
+            ;;
+        create_issue)
+            [[ $# -lt 3 ]] && { echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2; exit 1; }
+            op_create_issue "$@"
+            ;;
+        update_issue)
+            [[ $# -lt 2 ]] && { echo "Error: update_issue requires KEY FIELDS_JSON" >&2; exit 1; }
+            op_update_issue "$@"
+            ;;
+        add_comment)
+            [[ $# -lt 2 ]] && { echo "Error: add_comment requires KEY BODY" >&2; exit 1; }
+            op_add_comment "$@"
+            ;;
+        get_transitions)
+            [[ $# -lt 1 ]] && { echo "Error: get_transitions requires issue key" >&2; exit 1; }
+            op_get_transitions "$@"
+            ;;
+        transition_issue)
+            [[ $# -lt 2 ]] && { echo "Error: transition_issue requires KEY TRANSITION_ID" >&2; exit 1; }
+            op_transition_issue "$@"
+            ;;
+        search_jql)
+            [[ $# -lt 1 ]] && { echo "Error: search_jql requires JQL query" >&2; exit 1; }
+            op_search_jql "$@"
+            ;;
+        get_projects)
+            op_get_projects "$@"
+            ;;
+        get_issue_types)
+            [[ $# -lt 1 ]] && { echo "Error: get_issue_types requires project key" >&2; exit 1; }
+            op_get_issue_types "$@"
+            ;;
+        lookup_user)
+            [[ $# -lt 1 ]] && { echo "Error: lookup_user requires query" >&2; exit 1; }
+            op_lookup_user "$@"
+            ;;
+        add_worklog)
+            [[ $# -lt 2 ]] && { echo "Error: add_worklog requires KEY TIME_SPENT" >&2; exit 1; }
+            op_add_worklog "$@"
+            ;;
+        upload_attachment)
+            [[ $# -lt 2 ]] && { echo "Error: upload_attachment requires KEY FILE" >&2; exit 1; }
+            op_upload_attachment "$@"
+            ;;
+        get_remote_links)
+            [[ $# -lt 1 ]] && { echo "Error: get_remote_links requires issue key" >&2; exit 1; }
+            op_get_remote_links "$@"
+            ;;
+        test_connection)
+            op_test_connection
+            ;;
+        *)
+            suggestion="$(suggest_op "$operation")"
+            echo "Unknown operation '$operation'." >&2
+            if [[ -n "$suggestion" ]]; then
+                echo "Did you mean: ${suggestion}?" >&2
+            fi
+            echo "Run with no arguments to see full usage." >&2
+            exit 2
+            ;;
+    esac
+fi

@@ -1,6 +1,7 @@
 ---
 name: jira-writer
 description: Read, search, create, and update Jira Cloud tickets — fetch issue details, search with JQL, list projects, look up users, and write rich content with automatic Mermaid diagram embedding
+model: claude-sonnet-4-6
 ---
 
 # Jira Writer Skill
@@ -179,64 +180,56 @@ The following scripts automate operations (located in `scripts/` directory):
 
 #### Script Selection Guide
 
-| Script | Purpose | Input Format |
-|--------|---------|--------------|
-| `jira-api-wrapper.sh` | **PRIMARY interface** - use this for all operations | Positional arguments |
-| `jira-rest-api.sh` | Low-level API access (advanced use only) | Raw JSON |
-
-**IMPORTANT:** Always use `jira-api-wrapper.sh` for Jira operations. It accepts user-friendly positional arguments and handles JSON construction internally. Only use `jira-rest-api.sh` directly when you need to pass custom raw JSON payloads.
+All operations go through `jira-api-wrapper.sh`. The low-level functions in `jira-rest-api.sh` are sourced by the wrapper and are not invoked directly.
 
 #### Primary Scripts
 
 **jira-api-wrapper.sh** (USE THIS)
 ```bash
 # Create issue - accepts positional args
-./scripts/jira-api-wrapper.sh create_issue PROJECT_KEY TYPE "Summary" "Description"
-./scripts/jira-api-wrapper.sh create_issue PROJ Task "Fix login bug" "Users cannot login"
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY TYPE "Summary" "Description"
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJ Task "Fix login bug" "Users cannot login"
 
 # Update issue
-./scripts/jira-api-wrapper.sh update_issue PROJ-123 '{"fields":{"summary":"New title"}}'
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"fields":{"summary":"New title"}}'
 
 # Get issue
-./scripts/jira-api-wrapper.sh get_issue PROJ-123
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123
 
 # Search with JQL
-./scripts/jira-api-wrapper.sh search_jql "project = PROJ AND status = Open"
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" search_jql "project = PROJ AND status = Open"
 
 # Get projects and issue types
-./scripts/jira-api-wrapper.sh get_projects
-./scripts/jira-api-wrapper.sh get_issue_types PROJECT_KEY
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_projects
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue_types PROJECT_KEY
 
 # Add comment
-./scripts/jira-api-wrapper.sh add_comment PROJ-123 "This is a comment"
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment PROJ-123 "This is a comment"
+
+# Add worklog
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_worklog PROJ-123 "2h"
 
 # Transitions
-./scripts/jira-api-wrapper.sh get_transitions PROJ-123
-./scripts/jira-api-wrapper.sh transition_issue PROJ-123 TRANSITION_ID
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_transitions PROJ-123
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" transition_issue PROJ-123 TRANSITION_ID
 
 # Upload attachment
-./scripts/jira-api-wrapper.sh upload_attachment PROJ-123 /path/to/file.png
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" upload_attachment PROJ-123 /path/to/file.png
 ```
 
-**jira-rest-api.sh** (Low-level - advanced use only)
-```bash
-# Only use when you need raw JSON control
-./scripts/jira-rest-api.sh jira_create_issue '{"fields":{"project":{"key":"PROJ"},"issuetype":{"name":"Task"},"summary":"Title"}}'
-./scripts/jira-rest-api.sh jira_get_issue PROJ-123
-./scripts/jira-rest-api.sh jira_update_issue PROJ-123 '{"fields":{...}}'
-```
+**Aliases:** The wrapper accepts the canonical op names listed above plus common variants — verb-only forms (`issue`, `create`, `comment`, `search`, `projects`), camelCase (`getIssue`), and `jira_`-prefixed names (`jira_get_issue`). Unknown ops exit 2 with a "Did you mean: …" suggestion.
 
 #### Diagnostic Scripts
 
 **test-jira-connection.sh**
 ```bash
-./scripts/test-jira-connection.sh
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/test-jira-connection.sh"
 # Tests API connectivity and returns recommendation
 ```
 
 **check-prerequisites.sh**
 ```bash
-./scripts/check-prerequisites.sh
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/check-prerequisites.sh"
 # Returns JSON with status of all dependencies
 ```
 
@@ -244,14 +237,14 @@ The following scripts automate operations (located in `scripts/` directory):
 
 **jira-mermaid-upload.sh**
 ```bash
-./scripts/jira-mermaid-upload.sh <issue_key> <mermaid_file_or_code> [filename]
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-mermaid-upload.sh" <issue_key> <mermaid_file_or_code> [filename]
 # Converts mermaid to PNG and uploads to Jira
 # Returns: { "attachment_id": "...", "content_url": "...", "filename": "..." }
 ```
 
 **jira-mermaid-batch-upload.sh**
 ```bash
-./scripts/jira-mermaid-batch-upload.sh <issue_key> '<json_array_of_diagrams>'
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-mermaid-batch-upload.sh" <issue_key> '<json_array_of_diagrams>'
 # Processes multiple diagrams in one call
 ```
 
@@ -263,7 +256,7 @@ When creating new issues:
 
 Check available issue types for a project:
 ```bash
-./scripts/jira-api-wrapper.sh get_issue_types PROJECT_KEY
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue_types PROJECT_KEY
 # Or via MCP: mcp__atlassian__getJiraProjectIssueTypesMetadata with projectIdOrKey
 ```
 
@@ -325,7 +318,7 @@ For each mermaid block:
         SKIP this diagram
 
 4d. UPLOAD attachment (REST API required)
-    Use: ./scripts/jira-api-wrapper.sh upload_attachment $ISSUE_KEY $TEMP_DIR/diagram-N.png
+    Use: "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" upload_attachment $ISSUE_KEY $TEMP_DIR/diagram-N.png
     Or directly:
     POST to: https://$JIRA_DOMAIN/rest/api/3/issue/$ISSUE_KEY/attachments
     Headers:
@@ -408,7 +401,7 @@ Choose API based on content complexity (determined in Step 5):
 **For new issues:**
 ```bash
 # Try REST API first
-./scripts/jira-api-wrapper.sh create_issue PROJECT_KEY "Task" "Summary" "Description"
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY "Task" "Summary" "Description"
 
 # If response indicates MCP fallback needed:
 # Use mcp__atlassian__createJiraIssue with:
@@ -429,7 +422,7 @@ Issue type mapping:
 **For existing issues:**
 ```bash
 # Try REST API first
-./scripts/jira-api-wrapper.sh update_issue PROJ-123 '{"description": "..."}'
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"description": "..."}'
 
 # If response indicates MCP fallback needed:
 # Use mcp__atlassian__editJiraIssue with:
@@ -443,7 +436,7 @@ Content with checkboxes, images, or mermaid diagrams requires REST API.
 **For new issues:**
 ```
 1. CREATE issue via REST API (or MCP if REST unavailable) with summary only:
-   ./scripts/jira-api-wrapper.sh create_issue PROJECT_KEY "Task" "Summary"
+   "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY "Task" "Summary"
 
 2. UPDATE description via REST API:
    curl -X PUT \
@@ -771,6 +764,7 @@ How to handle errors at each stage.
 | Attachment upload | Other error | RETRY once; if fails, skip with warning |
 | Description update | REST error | TRY MCP fallback (for simple content); ROLLBACK attachments; report error |
 | Section detection | Section not found | ASK user for clarification |
+| Wrapper exit 2 | Unknown operation | Suggestion shown; check op name or run with no args |
 
 ### Rollback Procedure
 
@@ -779,7 +773,7 @@ When description update fails after attachments were uploaded:
 ```
 FOR each uploaded attachment_id:
     curl -X DELETE \
-      -H "Authorization: Basic $JIRA_API_KEY" \
+      -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64)" \
       "https://$JIRA_DOMAIN/rest/api/3/attachment/$attachment_id"
 
 REPORT to user:
@@ -964,7 +958,7 @@ Common usage patterns for this skill.
 1. No complex content detected -> REST API with MCP fallback available
 2. Try REST API first:
    ```bash
-   ./scripts/jira-api-wrapper.sh create_issue PROJECT "Task" "Refactor database connection pool" "Description..."
+   "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT "Task" "Refactor database connection pool" "Description..."
    ```
 3. If REST fails, fall back to `mcp__atlassian__createJiraIssue` with:
    - projectKey
@@ -980,7 +974,7 @@ Common usage patterns for this skill.
 > "Show me the details of PROJ-123"
 
 **Skill execution:**
-1. Run: `./scripts/jira-api-wrapper.sh get_issue PROJ-123`
+1. Run: `"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123`
 2. Parse response and present summary, status, assignee, description, etc.
 
 ---
@@ -992,7 +986,7 @@ Common usage patterns for this skill.
 
 **Skill execution:**
 1. Build JQL: `project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()`
-2. Run: `./scripts/jira-api-wrapper.sh search_jql "project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()"`
+2. Run: `"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" search_jql "project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()"`
 3. Present results in a readable format
 
 ---
@@ -1003,5 +997,5 @@ Common usage patterns for this skill.
 > "What Jira projects do I have access to?"
 
 **Skill execution:**
-1. Run: `./scripts/jira-api-wrapper.sh get_projects`
+1. Run: `"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_projects`
 2. Present project list with keys and names

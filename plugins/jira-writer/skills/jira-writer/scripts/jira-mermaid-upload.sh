@@ -123,10 +123,12 @@ main() {
         exit 2
     fi
 
-    # Create temp directory
-    local temp_dir
+    # Create temp directory.
+    # NOTE: temp_dir is intentionally script-scoped (no `local`) so it remains
+    # in scope when the EXIT trap fires after main() returns. With `set -u`,
+    # a local would be unset at trap time and rm -rf would fail.
     temp_dir=$(mktemp -d)
-    trap "rm -rf $temp_dir" EXIT
+    trap 'rm -rf "$temp_dir"' EXIT
 
     local mmd_file="$temp_dir/diagram.mmd"
     local png_file="$temp_dir/$output_filename"
