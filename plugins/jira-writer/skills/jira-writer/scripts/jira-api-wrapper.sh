@@ -679,6 +679,15 @@ suggest_op() {
 
 # Only run dispatch when invoked directly (not sourced for testing).
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]; then
+    # Plugin-runtime sanity warning.
+    # When invoked from a plugin skill, $CLAUDE_PLUGIN_ROOT should be set
+    # and the script's path should contain /plugins/cache/. If neither is
+    # true, warn (but do not fail) — direct invocations remain valid.
+    if [[ -z "${CLAUDE_PLUGIN_ROOT:-}" ]] && [[ "${BASH_SOURCE[0]}" != *"/plugins/cache/"* ]]; then
+        echo "[WARN] CLAUDE_PLUGIN_ROOT is unset and script is not under /plugins/cache/." >&2
+        echo "[WARN] If you invoked this from a Claude Code skill, the plugin runtime may have changed." >&2
+    fi
+
     if [[ $# -lt 1 ]]; then
         print_usage
         exit 1
