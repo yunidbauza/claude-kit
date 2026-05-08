@@ -1,6 +1,7 @@
 ---
 name: jira-writer
 description: Read, search, create, and update Jira Cloud tickets — fetch issue details, search with JQL, list projects, look up users, and write rich content with automatic Mermaid diagram embedding
+model: claude-sonnet-4-6
 ---
 
 # Jira Writer Skill
