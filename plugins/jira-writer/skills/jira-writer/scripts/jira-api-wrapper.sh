@@ -253,21 +253,12 @@ op_add_comment() {
         return 1
     fi
 
-    # Build comment data (ADF format)
+    # Build comment data (ADF format). _to_adf_body passes through pre-built
+    # ADF docs unchanged, or wraps plain text as a single paragraph.
+    local body_adf
+    body_adf=$(_to_adf_body "$comment_body")
     local comment_data
-    comment_data=$(jq -n --arg text "$comment_body" '{
-        "body": {
-            "type": "doc",
-            "version": 1,
-            "content": [{
-                "type": "paragraph",
-                "content": [{
-                    "type": "text",
-                    "text": $text
-                }]
-            }]
-        }
-    }')
+    comment_data=$(jq -n --argjson body "$body_adf" '{body: $body}')
 
     # Try REST API
     local result

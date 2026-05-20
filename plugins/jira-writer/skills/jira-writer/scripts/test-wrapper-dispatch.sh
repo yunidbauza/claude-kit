@@ -115,6 +115,51 @@ out=$(_to_adf_body '{ malformed')
 assert_eq "_to_adf_body malformed JSON: falls back to plain-text wrap" "paragraph" "$(printf '%s' "$out" | jq -r '.content[0].type')"
 assert_eq "_to_adf_body malformed JSON: literal text preserved" "{ malformed" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
 
+# --- op_add_comment: stub jira_add_comment to capture the data it receives ---
+# Save originals so later tests can override differently if needed.
+JIRA_DOMAIN_SAVE="${JIRA_DOMAIN:-}"
+JIRA_API_KEY_SAVE="${JIRA_API_KEY:-}"
+export JIRA_DOMAIN="example.atlassian.net"
+export JIRA_API_KEY="user@example.com:fake-token"
+
+# Use a temp file to capture data from within command-substitution subshells.
+_COMMENT_CAPTURE_FILE="$(mktemp)"
+trap 'rm -f "$_COMMENT_CAPTURE_FILE"' EXIT
+jira_add_comment() {
+    # $1 = issue_key, $2 = data
+    printf '%s' "$2" > "$_COMMENT_CAPTURE_FILE"
+    printf '%s' '{"id":"10001","self":"http://example/comment/10001"}'
+    return 0
+}
+
+# Plain text input -> single paragraph
+printf '' > "$_COMMENT_CAPTURE_FILE"
+op_add_comment PROJ-1 "plain text" >/dev/null
+CAPTURED_COMMENT_DATA="$(cat "$_COMMENT_CAPTURE_FILE")"
+assert_eq "op_add_comment plain: body.content[0].type" \
+    "paragraph" \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -r '.body.content[0].type')"
+assert_eq "op_add_comment plain: text node value" \
+    "plain text" \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -r '.body.content[0].content[0].text')"
+
+# ADF input -> body equals input ADF
+adf_in='{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"H"}]}]}'
+printf '' > "$_COMMENT_CAPTURE_FILE"
+op_add_comment PROJ-1 "$adf_in" >/dev/null
+CAPTURED_COMMENT_DATA="$(cat "$_COMMENT_CAPTURE_FILE")"
+assert_eq "op_add_comment ADF: body equals input ADF" \
+    "$(printf '%s' "$adf_in" | jq -cS .)" \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -cS '.body')"
+
+# Non-ADF JSON -> wrapped as literal text
+printf '' > "$_COMMENT_CAPTURE_FILE"
+op_add_comment PROJ-1 '{"foo":"bar"}' >/dev/null
+CAPTURED_COMMENT_DATA="$(cat "$_COMMENT_CAPTURE_FILE")"
+assert_eq "op_add_comment non-ADF JSON: literal text preserved" \
+    '{"foo":"bar"}' \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -r '.body.content[0].content[0].text')"
+
 # --- summary ---
 echo
 printf "Total: %d passed, %d failed\n" "$PASS" "$FAIL"
