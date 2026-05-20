@@ -103,6 +103,15 @@ check_rest_available() {
     return 0
 }
 
+# Shared jq filter for ADF document detection. Used by _to_adf_body and
+# _input_was_adf to keep their definitions of "is this ADF?" in lockstep.
+_ADF_DOC_JQ_FILTER='
+    type == "object"
+    and .type == "doc"
+    and (.version | type) == "number"
+    and (.content | type) == "array"
+'
+
 # _to_adf_body INPUT
 # Echoes a valid ADF document JSON to stdout.
 # - If INPUT parses as a JSON object with .type == "doc", numeric .version,
@@ -113,12 +122,7 @@ _to_adf_body() {
     # Cheap pre-filter: must start with '{' (allow leading whitespace) to
     # even consider as JSON. Anything else is plain text.
     if [[ "$input" =~ ^[[:space:]]*\{ ]]; then
-        if printf '%s' "$input" | jq -e '
-            type == "object"
-            and .type == "doc"
-            and (.version | type) == "number"
-            and (.content | type) == "array"
-        ' >/dev/null 2>&1; then
+        if printf '%s' "$input" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1; then
             printf '%s\n' "$input"
             return 0
         fi
@@ -140,12 +144,7 @@ _to_adf_body() {
 _input_was_adf() {
     local input="${1:-}"
     [[ "$input" =~ ^[[:space:]]*\{ ]] || return 1
-    printf '%s' "$input" | jq -e '
-        type == "object"
-        and .type == "doc"
-        and (.version | type) == "number"
-        and (.content | type) == "array"
-    ' >/dev/null 2>&1
+    printf '%s' "$input" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1
 }
 
 # --- Operation Handlers ---
