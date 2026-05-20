@@ -262,6 +262,15 @@ else
     printf "FAIL  op_create_issue ADF+no-creds: expected .note in envelope, got:\n        %s\n" "$out"
 fi
 
+# --- op_update_issue rejects malformed JSON ---
+# Credentials set so the error comes from JSON validation, not cred check.
+export JIRA_DOMAIN="example.atlassian.net"
+export JIRA_API_KEY="user@example.com:fake-token"
+
+out=$(op_update_issue PROJ-1 'not json' 2>/dev/null) || true
+assert_eq "op_update_issue malformed JSON: api is error" "error" "$(printf '%s' "$out" | jq -r '.api')"
+assert_eq "op_update_issue malformed JSON: error mentions Invalid JSON" "true" "$(printf '%s' "$out" | jq -r '.error | contains("Invalid JSON")')"
+
 # --- summary ---
 echo
 printf "Total: %d passed, %d failed\n" "$PASS" "$FAIL"

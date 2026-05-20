@@ -253,9 +253,27 @@ op_update_issue() {
     local issue_key="$1"
     local fields_json="$2"
 
+    # Validate JSON input before anything else so the error returns regardless
+    # of credential state.
+    if ! printf '%s' "$fields_json" | jq -e . >/dev/null 2>&1; then
+        jq -n --arg key "$issue_key" --arg input "$fields_json" '{
+            "api": "error",
+            "error": "Invalid JSON in fields argument",
+            "operation": "update_issue",
+            "issue_key": $key,
+            "input": $input
+        }'
+        return 1
+    fi
+
+    # Build MCP params once, reused at both fallback sites.
+    local mcp_params
+    mcp_params=$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" \
+        '{issueIdOrKey: $key, fields: $fields}')
+
     # Check REST availability
     if ! check_rest_available; then
-        output_mcp_fallback "editJiraIssue" "$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" '{issueIdOrKey: $key, fields: $fields}')" "REST credentials not configured"
+        output_mcp_fallback "editJiraIssue" "$mcp_params" "REST credentials not configured"
         return 1
     fi
 
@@ -274,7 +292,7 @@ op_update_issue() {
         fi
         return 0
     else
-        output_mcp_fallback "editJiraIssue" "$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" '{issueIdOrKey: $key, fields: $fields}')" "$result"
+        output_mcp_fallback "editJiraIssue" "$mcp_params" "$result"
         return 1
     fi
 }
