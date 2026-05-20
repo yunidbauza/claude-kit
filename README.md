@@ -9,7 +9,7 @@ Claude Code plugin for creating and updating Jira Cloud tickets with rich conten
 First, add the repository as a marketplace:
 
 ```bash
-/plugin marketplace add yunidbauza/jira-writer
+/plugin marketplace add yunidbauza/claude-kit
 ```
 
 Then install the plugin:
@@ -21,10 +21,10 @@ Then install the plugin:
 ### Manual Installation
 
 ```bash
-git clone https://github.com/yunidbauza/jira-writer.git /tmp/jira-writer
-cp -r /tmp/jira-writer/plugins/jira-writer ~/.claude/plugins/
+git clone https://github.com/yunidbauza/claude-kit.git /tmp/claude-kit
+cp -r /tmp/claude-kit/plugins/jira-writer ~/.claude/plugins/
 chmod +x ~/.claude/plugins/jira-writer/skills/jira-writer/scripts/*.sh
-rm -rf /tmp/jira-writer
+rm -rf /tmp/claude-kit
 ```
 
 ## Prerequisites

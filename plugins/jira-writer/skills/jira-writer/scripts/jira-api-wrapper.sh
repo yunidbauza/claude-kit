@@ -12,8 +12,14 @@
 # that handles API selection and fallback signaling.
 #
 # Output (JSON):
-#   On success: { "api": "rest", "data": {...} }
-#   On REST failure: { "api": "mcp_fallback", "operation": "...", "params": {...} }
+#   On success:
+#     { "api": "rest", "data": {...} }
+#   On REST failure:
+#     { "api": "mcp_fallback", "operation": "...", "params": {...},
+#       "rest_error": "...", "note": "..." (optional) }
+#   The "note" field is present when the original user input was a pre-built
+#   ADF document — it warns the agent that the MCP fallback path will render
+#   the content as text, not rich ADF.
 #
 # Environment Variables:
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
@@ -52,23 +58,41 @@ output_rest_success() {
 }
 
 # Output MCP fallback signal
+# Args: operation, params, error, [note]
+# If note is non-empty, it's merged into the envelope as .note.
 output_mcp_fallback() {
     local operation="$1"
     local params="$2"
     local error="${3:-}"
+    local note="${4:-}"
 
     log_warn "REST API failed, signaling MCP fallback..."
 
-    jq -n \
-        --arg operation "$operation" \
-        --argjson params "$params" \
-        --arg error "$error" \
-        '{
-            "api": "mcp_fallback",
-            "operation": $operation,
-            "params": $params,
-            "rest_error": $error
-        }'
+    if [[ -n "$note" ]]; then
+        jq -n \
+            --arg operation "$operation" \
+            --argjson params "$params" \
+            --arg error "$error" \
+            --arg note "$note" \
+            '{
+                "api": "mcp_fallback",
+                "operation": $operation,
+                "params": $params,
+                "rest_error": $error,
+                "note": $note
+            }'
+    else
+        jq -n \
+            --arg operation "$operation" \
+            --argjson params "$params" \
+            --arg error "$error" \
+            '{
+                "api": "mcp_fallback",
+                "operation": $operation,
+                "params": $params,
+                "rest_error": $error
+            }'
+    fi
 }
 
 # Check if REST API is available
@@ -77,6 +101,51 @@ check_rest_available() {
         return 1
     fi
     return 0
+}
+
+# _to_adf_body INPUT
+# Echoes a valid ADF document JSON to stdout.
+# - If INPUT parses as a JSON object with .type == "doc", numeric .version,
+#   and array .content, echo it unchanged (pass-through).
+# - Otherwise wrap INPUT as a single plain-text paragraph (legacy behavior).
+_to_adf_body() {
+    local input="${1:-}"
+    # Cheap pre-filter: must start with '{' (allow leading whitespace) to
+    # even consider as JSON. Anything else is plain text.
+    if [[ "$input" =~ ^[[:space:]]*\{ ]]; then
+        if printf '%s' "$input" | jq -e '
+            type == "object"
+            and .type == "doc"
+            and (.version | type) == "number"
+            and (.content | type) == "array"
+        ' >/dev/null 2>&1; then
+            printf '%s\n' "$input"
+            return 0
+        fi
+    fi
+    jq -n --arg text "$input" '{
+        type: "doc",
+        version: 1,
+        content: [{
+            type: "paragraph",
+            content: [{ type: "text", text: $text }]
+        }]
+    }'
+}
+
+# _input_was_adf INPUT
+# Returns 0 (success) if INPUT is a valid ADF doc as recognized by _to_adf_body.
+# Used by ops to decide whether to attach an explanatory note when falling
+# back to MCP (which renders raw strings as markdown/text, not ADF).
+_input_was_adf() {
+    local input="${1:-}"
+    [[ "$input" =~ ^[[:space:]]*\{ ]] || return 1
+    printf '%s' "$input" | jq -e '
+        type == "object"
+        and .type == "doc"
+        and (.version | type) == "number"
+        and (.content | type) == "array"
+    ' >/dev/null 2>&1
 }
 
 # --- Operation Handlers ---
@@ -111,30 +180,23 @@ op_create_issue() {
     local description="${4:-}"
 
     # Build the issue data
-    # Note: Jira API v3 requires description in ADF format
+    # Note: Jira API v3 requires description in ADF format. _to_adf_body
+    # passes through pre-built ADF docs unchanged, or wraps plain text.
     local issue_data
     if [[ -n "$description" ]]; then
+        local desc_adf
+        desc_adf=$(_to_adf_body "$description")
         issue_data=$(jq -n \
             --arg project "$project_key" \
             --arg type "$issue_type" \
             --arg summary "$summary" \
-            --arg desc "$description" \
+            --argjson desc "$desc_adf" \
             '{
                 "fields": {
                     "project": {"key": $project},
                     "issuetype": {"name": $type},
                     "summary": $summary,
-                    "description": {
-                        "type": "doc",
-                        "version": 1,
-                        "content": [{
-                            "type": "paragraph",
-                            "content": [{
-                                "type": "text",
-                                "text": $desc
-                            }]
-                        }]
-                    }
+                    "description": $desc
                 }
             }')
     else
@@ -153,7 +215,10 @@ op_create_issue() {
 
     # Check REST availability
     if ! check_rest_available; then
-        output_mcp_fallback "createJiraIssue" "$issue_data" "REST credentials not configured"
+        local _note=""
+        [[ -n "$description" ]] && _input_was_adf "$description" \
+            && _note="Original description was ADF; MCP fallback will render as text."
+        output_mcp_fallback "createJiraIssue" "$issue_data" "REST credentials not configured" "$_note"
         return 1
     fi
 
@@ -176,7 +241,10 @@ op_create_issue() {
                 summary: $summary,
                 description: $desc
             }')
-        output_mcp_fallback "createJiraIssue" "$mcp_params" "$result"
+        local _note=""
+        [[ -n "$description" ]] && _input_was_adf "$description" \
+            && _note="Original description was ADF; MCP fallback will render as text."
+        output_mcp_fallback "createJiraIssue" "$mcp_params" "$result" "$_note"
         return 1
     fi
 }
@@ -219,25 +287,21 @@ op_add_comment() {
 
     # Check REST availability
     if ! check_rest_available; then
-        output_mcp_fallback "addCommentToJiraIssue" "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" "REST credentials not configured"
+        local _note=""
+        _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
+        output_mcp_fallback "addCommentToJiraIssue" \
+            "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" \
+            "REST credentials not configured" \
+            "$_note"
         return 1
     fi
 
-    # Build comment data (ADF format)
+    # Build comment data (ADF format). _to_adf_body passes through pre-built
+    # ADF docs unchanged, or wraps plain text as a single paragraph.
+    local body_adf
+    body_adf=$(_to_adf_body "$comment_body")
     local comment_data
-    comment_data=$(jq -n --arg text "$comment_body" '{
-        "body": {
-            "type": "doc",
-            "version": 1,
-            "content": [{
-                "type": "paragraph",
-                "content": [{
-                    "type": "text",
-                    "text": $text
-                }]
-            }]
-        }
-    }')
+    comment_data=$(jq -n --argjson body "$body_adf" '{body: $body}')
 
     # Try REST API
     local result
@@ -245,7 +309,12 @@ op_add_comment() {
         output_rest_success "$result"
         return 0
     else
-        output_mcp_fallback "addCommentToJiraIssue" "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" "$result"
+        local _note=""
+        _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
+        output_mcp_fallback "addCommentToJiraIssue" \
+            "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" \
+            "$result" \
+            "$_note"
         return 1
     fi
 }

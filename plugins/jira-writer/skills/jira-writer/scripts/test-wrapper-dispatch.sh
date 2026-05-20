@@ -39,6 +39,13 @@ export JIRA_WRAPPER_TEST_MODE
 # shellcheck source=jira-api-wrapper.sh
 source "$SCRIPT_DIR/jira-api-wrapper.sh"
 
+# --- Cleanup registry: any test that creates a temp file appends its path
+# to _CLEANUP_FILES, and the EXIT trap removes them all. Avoids the
+# trap-accumulation hazard where each new temp file's trap would override
+# the previous one's cleanup.
+_CLEANUP_FILES=()
+trap 'rm -f "${_CLEANUP_FILES[@]:-}"' EXIT
+
 # --- normalize_op: identity for canonical ops ---
 assert_eq "canonical get_issue passes through" "get_issue" "$(normalize_op get_issue)"
 assert_eq "canonical create_issue passes through" "create_issue" "$(normalize_op create_issue)"
@@ -78,6 +85,182 @@ assert_eq "unknown op passes through unchanged" "notarealop" "$(normalize_op not
 first_suggestion="$(suggest_op get_isue | cut -d',' -f1 | tr -d '[:space:]')"
 assert_eq "suggest_op get_isue first suggestion is get_issue" "get_issue" "$first_suggestion"
 assert_contains "suggest_op projct includes get_projects" "get_projects" "$(suggest_op projct)"
+
+# --- _to_adf_body: plain text wraps in paragraph ---
+out=$(_to_adf_body "plain text")
+assert_eq "_to_adf_body plain: top type is doc" "doc" "$(printf '%s' "$out" | jq -r '.type')"
+assert_eq "_to_adf_body plain: version is 1" "1" "$(printf '%s' "$out" | jq -r '.version')"
+assert_eq "_to_adf_body plain: content[0].type is paragraph" "paragraph" "$(printf '%s' "$out" | jq -r '.content[0].type')"
+assert_eq "_to_adf_body plain: text node value" "plain text" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
+# --- _to_adf_body: valid ADF passes through unchanged ---
+adf_in='{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"H"}]}]}'
+out=$(_to_adf_body "$adf_in")
+assert_eq "_to_adf_body ADF: passes through identical" "$(printf '%s' "$adf_in" | jq -cS .)" "$(printf '%s' "$out" | jq -cS .)"
+
+# --- _to_adf_body: non-ADF JSON-shaped input falls back to plain text ---
+out=$(_to_adf_body '{"foo":"bar"}')
+assert_eq "_to_adf_body non-ADF JSON: type still doc" "doc" "$(printf '%s' "$out" | jq -r '.type')"
+assert_eq "_to_adf_body non-ADF JSON: text node is literal JSON" '{"foo":"bar"}' "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
+# --- _to_adf_body: ADF with leading whitespace recognized ---
+adf_ws='   {"type":"doc","version":1,"content":[]}'
+out=$(_to_adf_body "$adf_ws")
+assert_eq "_to_adf_body ADF+whitespace: content array empty" "0" "$(printf '%s' "$out" | jq '.content | length')"
+assert_eq "_to_adf_body ADF+whitespace: top type is doc" "doc" "$(printf '%s' "$out" | jq -r '.type')"
+
+# --- _to_adf_body: ADF with string version rejected (strict check) ---
+out=$(_to_adf_body '{"type":"doc","version":"1","content":[]}')
+assert_eq "_to_adf_body string version: falls back to plain-text wrap" "paragraph" "$(printf '%s' "$out" | jq -r '.content[0].type')"
+
+# --- _to_adf_body: non-JSON input ---
+out=$(_to_adf_body "not json at all")
+assert_eq "_to_adf_body non-JSON: text node value" "not json at all" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
+# --- _to_adf_body: malformed JSON ---
+out=$(_to_adf_body '{ malformed')
+assert_eq "_to_adf_body malformed JSON: falls back to plain-text wrap" "paragraph" "$(printf '%s' "$out" | jq -r '.content[0].type')"
+assert_eq "_to_adf_body malformed JSON: literal text preserved" "{ malformed" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
+# --- op_add_comment: stub jira_add_comment to capture the data it receives ---
+# Test-mode credentials. Subsequent tests assume these are set; Task 5
+# unsets them explicitly when testing the no-credentials fallback path.
+export JIRA_DOMAIN="example.atlassian.net"
+export JIRA_API_KEY="user@example.com:fake-token"
+
+# Use a temp file to capture data from within command-substitution subshells.
+_COMMENT_CAPTURE_FILE="$(mktemp)"
+_CLEANUP_FILES+=("$_COMMENT_CAPTURE_FILE")
+jira_add_comment() {
+    # $1 = issue_key, $2 = data
+    printf '%s' "$2" > "$_COMMENT_CAPTURE_FILE"
+    printf '%s' '{"id":"10001","self":"http://example/comment/10001"}'
+    return 0
+}
+
+# Plain text input -> single paragraph
+printf '' > "$_COMMENT_CAPTURE_FILE"
+op_add_comment PROJ-1 "plain text" >/dev/null
+CAPTURED_COMMENT_DATA="$(cat "$_COMMENT_CAPTURE_FILE")"
+assert_eq "op_add_comment plain: body.content[0].type" \
+    "paragraph" \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -r '.body.content[0].type')"
+assert_eq "op_add_comment plain: text node value" \
+    "plain text" \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -r '.body.content[0].content[0].text')"
+
+# ADF input -> body equals input ADF
+adf_in='{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"H"}]}]}'
+printf '' > "$_COMMENT_CAPTURE_FILE"
+op_add_comment PROJ-1 "$adf_in" >/dev/null
+CAPTURED_COMMENT_DATA="$(cat "$_COMMENT_CAPTURE_FILE")"
+assert_eq "op_add_comment ADF: body equals input ADF" \
+    "$(printf '%s' "$adf_in" | jq -cS .)" \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -cS '.body')"
+
+# Non-ADF JSON -> wrapped as literal text
+printf '' > "$_COMMENT_CAPTURE_FILE"
+op_add_comment PROJ-1 '{"foo":"bar"}' >/dev/null
+CAPTURED_COMMENT_DATA="$(cat "$_COMMENT_CAPTURE_FILE")"
+assert_eq "op_add_comment non-ADF JSON: literal text preserved" \
+    '{"foo":"bar"}' \
+    "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -r '.body.content[0].content[0].text')"
+
+# --- op_create_issue: stub jira_create_issue to capture issue_data ---
+# Use a separate temp file so this doesn't collide with comment captures.
+_CREATE_CAPTURE_FILE="$(mktemp)"
+_CLEANUP_FILES+=("$_CREATE_CAPTURE_FILE")
+jira_create_issue() {
+    # $1 = data
+    printf '%s' "$1" > "$_CREATE_CAPTURE_FILE"
+    printf '%s' '{"id":"10001","key":"PROJ-1","self":"http://example/issue/PROJ-1"}'
+    return 0
+}
+
+# Plain text description -> single paragraph
+> "$_CREATE_CAPTURE_FILE"
+op_create_issue PROJ Task "Summary" "plain desc" >/dev/null
+captured=$(cat "$_CREATE_CAPTURE_FILE")
+assert_eq "op_create_issue plain desc: description.content[0].type" \
+    "paragraph" \
+    "$(printf '%s' "$captured" | jq -r '.fields.description.content[0].type')"
+assert_eq "op_create_issue plain desc: text node value" \
+    "plain desc" \
+    "$(printf '%s' "$captured" | jq -r '.fields.description.content[0].content[0].text')"
+
+# ADF description -> passed through unchanged
+adf_in='{"type":"doc","version":1,"content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"item"}]}]}]}]}'
+> "$_CREATE_CAPTURE_FILE"
+op_create_issue PROJ Task "Summary" "$adf_in" >/dev/null
+captured=$(cat "$_CREATE_CAPTURE_FILE")
+assert_eq "op_create_issue ADF desc: description equals input ADF" \
+    "$(printf '%s' "$adf_in" | jq -cS .)" \
+    "$(printf '%s' "$captured" | jq -cS '.fields.description')"
+
+# Empty description -> description field absent (unchanged legacy behavior)
+> "$_CREATE_CAPTURE_FILE"
+op_create_issue PROJ Task "Summary Only" >/dev/null
+captured=$(cat "$_CREATE_CAPTURE_FILE")
+assert_eq "op_create_issue empty desc: description field is absent" \
+    "false" \
+    "$(printf '%s' "$captured" | jq -r '.fields | has("description")')"
+
+# --- output_mcp_fallback: 3-arg form (legacy) — no .note field ---
+out=$(output_mcp_fallback "someOp" '{"x":1}' "boom" 2>/dev/null)
+assert_eq "output_mcp_fallback 3-arg: api is mcp_fallback" "mcp_fallback" "$(printf '%s' "$out" | jq -r '.api')"
+assert_eq "output_mcp_fallback 3-arg: operation" "someOp" "$(printf '%s' "$out" | jq -r '.operation')"
+assert_eq "output_mcp_fallback 3-arg: rest_error" "boom" "$(printf '%s' "$out" | jq -r '.rest_error')"
+assert_eq "output_mcp_fallback 3-arg: no note field" "false" "$(printf '%s' "$out" | jq -r 'has("note")')"
+
+# --- output_mcp_fallback: 4-arg form — note merged ---
+out=$(output_mcp_fallback "someOp" '{"x":1}' "boom" "original body was ADF" 2>/dev/null)
+assert_eq "output_mcp_fallback 4-arg: note present" "original body was ADF" "$(printf '%s' "$out" | jq -r '.note')"
+assert_eq "output_mcp_fallback 4-arg: other fields unchanged" "someOp" "$(printf '%s' "$out" | jq -r '.operation')"
+
+# --- output_mcp_fallback: 4-arg form, empty note — field omitted ---
+out=$(output_mcp_fallback "someOp" '{"x":1}' "boom" "" 2>/dev/null)
+assert_eq "output_mcp_fallback empty note: field absent" "false" "$(printf '%s' "$out" | jq -r 'has("note")')"
+
+# --- MCP fallback note: unset credentials, keep existing stubs in place ---
+# Stubs from Tasks 2 & 3 (jira_add_comment, jira_create_issue) are still
+# defined in this shell, but the no-credentials branch returns before
+# calling them, so they won't fire here.
+unset JIRA_DOMAIN JIRA_API_KEY
+
+# --- add_comment with ADF body when REST credentials missing ---
+adf_in='{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"hi"}]}]}'
+out=$(op_add_comment PROJ-1 "$adf_in" 2>/dev/null) || true
+note=$(printf '%s' "$out" | jq -r '.note // empty')
+if [[ -n "$note" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_add_comment ADF+no-creds: note set\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_add_comment ADF+no-creds: expected .note in envelope, got:\n        %s\n" "$out"
+fi
+
+# --- add_comment with PLAIN body when REST creds missing => no note ---
+out=$(op_add_comment PROJ-1 "plain text" 2>/dev/null) || true
+has_note=$(printf '%s' "$out" | jq -r 'has("note")')
+if [[ "$has_note" == "false" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_add_comment plain+no-creds: no note field\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_add_comment plain+no-creds: unexpected .note in envelope:\n        %s\n" "$out"
+fi
+
+# --- create_issue with ADF description when REST creds missing ---
+adf_in='{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"H"}]}]}'
+out=$(op_create_issue PROJ Task "S" "$adf_in" 2>/dev/null) || true
+note=$(printf '%s' "$out" | jq -r '.note // empty')
+if [[ -n "$note" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_create_issue ADF+no-creds: note set\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_create_issue ADF+no-creds: expected .note in envelope, got:\n        %s\n" "$out"
+fi
 
 # --- summary ---
 echo
