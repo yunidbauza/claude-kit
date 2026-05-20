@@ -262,6 +262,14 @@ else
     printf "FAIL  op_create_issue ADF+no-creds: expected .note in envelope, got:\n        %s\n" "$out"
 fi
 
+# --- op_upload_attachment no-creds envelope shape ---
+unset JIRA_DOMAIN JIRA_API_KEY
+
+out=$(op_upload_attachment PROJ-1 /tmp/fakefile.png 2>/dev/null) || true
+assert_eq "op_upload_attachment no-creds: api is error" "error" "$(printf '%s' "$out" | jq -r '.api')"
+assert_eq "op_upload_attachment no-creds: operation is uploadJiraAttachment" "uploadJiraAttachment" "$(printf '%s' "$out" | jq -r '.operation')"
+assert_eq "op_upload_attachment no-creds: rest_error mentions credentials" "true" "$(printf '%s' "$out" | jq -r '.rest_error | contains("credentials")')"
+
 # --- op_update_issue rejects malformed JSON ---
 # Credentials set so the error comes from JSON validation, not cred check.
 export JIRA_DOMAIN="example.atlassian.net"
