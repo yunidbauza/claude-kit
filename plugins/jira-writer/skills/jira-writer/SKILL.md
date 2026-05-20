@@ -392,6 +392,10 @@ FOR each mermaid block position:
     }
 ```
 
+The same ADF-build instructions above apply to **rich comments**, not just
+descriptions. Build the ADF document, then pass it as the body argument to
+`add_comment` — the wrapper auto-detects ADF and passes it through.
+
 ### Step 6: Write to Jira
 
 Choose API based on content complexity (determined in Step 5):
@@ -434,17 +438,17 @@ Issue type mapping:
 Content with checkboxes, images, or mermaid diagrams requires REST API.
 
 **For new issues:**
-```
-1. CREATE issue via REST API (or MCP if REST unavailable) with summary only:
-   "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY "Task" "Summary"
 
-2. UPDATE description via REST API:
-   curl -X PUT \
-     -H "Authorization: Basic $(echo -n $JIRA_API_KEY | base64)" \
-     -H "Content-Type: application/json" \
-     -d '{"fields":{"description": <ADF_DOCUMENT>}}' \
-     "https://$JIRA_DOMAIN/rest/api/3/issue/<key>"
+```bash
+# Build the ADF document in-context (per Step 5a), then pass it as the
+# fourth argument to create_issue. The wrapper auto-detects pre-built ADF.
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
+    create_issue PROJECT_KEY "Task" "Summary" '<ADF_DOCUMENT_JSON>'
 ```
+
+If you need to attach mermaid images, follow the legacy two-step flow:
+create the issue with summary only, upload diagrams, then `update_issue`
+with description ADF referencing the attachment URLs.
 
 **For existing issues:**
 ```
@@ -487,6 +491,37 @@ curl -X PUT \
   }' \
   "https://$JIRA_DOMAIN/rest/api/3/issue/$ISSUE_KEY"
 ```
+
+**Adding rich comments:**
+
+The `add_comment` wrapper accepts both plain text and pre-built ADF. Strict
+detection: a JSON object with `type:"doc"`, numeric `version`, and array
+`content` is passed through; anything else is wrapped as a single paragraph.
+
+```bash
+# Simple text comment (unchanged):
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
+    add_comment PROJ-123 "Quick note."
+
+# Rich ADF comment (headings, lists, code blocks, checkboxes):
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
+    add_comment PROJ-123 '{
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {"type": "heading", "attrs": {"level": 2},
+             "content": [{"type": "text", "text": "Review notes"}]},
+            {"type": "bulletList", "content": [
+                {"type": "listItem", "content": [
+                    {"type": "paragraph", "content": [
+                        {"type": "text", "text": "First point"}]}]}]}
+        ]
+    }'
+```
+
+If REST fails and the wrapper falls back to MCP signalling, the envelope
+includes a `note` field warning that ADF input will not render rich
+through the MCP path.
 
 **On update failure with uploaded attachments:**
 ```
