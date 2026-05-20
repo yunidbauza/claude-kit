@@ -190,8 +190,8 @@ All operations go through `jira-api-wrapper.sh`. The low-level functions in `jir
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY TYPE "Summary" "Description"
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJ Task "Fix login bug" "Users cannot login"
 
-# Update issue
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"fields":{"summary":"New title"}}'
+# Update issue — pass only the field values; the wrapper auto-wraps with {"fields": ...}
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"summary":"New title"}'
 
 # Get issue
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123
@@ -215,6 +215,10 @@ All operations go through `jira-api-wrapper.sh`. The low-level functions in `jir
 
 # Upload attachment
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" upload_attachment PROJ-123 /path/to/file.png
+
+# Look up a user by name or email (returns accountId)
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
+    lookup_user "alice@example.com"
 ```
 
 **Aliases:** The wrapper accepts the canonical op names listed above plus common variants — verb-only forms (`issue`, `create`, `comment`, `search`, `projects`), camelCase (`getIssue`), and `jira_`-prefixed names (`jira_get_issue`). Unknown ops exit 2 with a "Did you mean: …" suggestion.
@@ -259,6 +263,18 @@ Check available issue types for a project:
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue_types PROJECT_KEY
 # Or via MCP: mcp__atlassian__getJiraProjectIssueTypesMetadata with projectIdOrKey
 ```
+
+### Output Envelope Shapes
+
+Every wrapper invocation returns JSON in one of three shapes:
+
+1. **REST success:** `{"api": "rest", "data": {...}}` — operation succeeded via REST API. `.data` is the Jira API response body.
+
+2. **MCP fallback:** `{"api": "mcp_fallback", "operation": "...", "params": {...}, "rest_error": "...", "note": "..."}` — REST failed (no credentials, network error, or 4xx/5xx). The agent should retry via the corresponding MCP tool with `params`. The optional `.note` field warns when the original input was pre-built ADF that won't render rich through MCP.
+
+3. **Non-recoverable error:** `{"api": "error", "operation": "...", "params": {...}, "rest_error": "..."}` — operation failed with no MCP fallback available (currently only attachment upload). Report the error to the user; no retry path exists in this script.
+
+The script's file header (`jira-api-wrapper.sh:14-27`) is authoritative.
 
 ## Workflow
 
@@ -425,8 +441,8 @@ Issue type mapping:
 
 **For existing issues:**
 ```bash
-# Try REST API first
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"description": "..."}'
+# Try REST API first — pass only field values; wrapper auto-wraps with {"fields": ...}
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"summary": "New title"}'
 
 # If response indicates MCP fallback needed:
 # Use mcp__atlassian__editJiraIssue with:
