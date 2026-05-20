@@ -142,30 +142,20 @@ main() {
         echo "$mermaid_input" > "$mmd_file"
     fi
 
-    # Validate mermaid syntax (use temp png file since /dev/null doesn't work)
-    log_info "Validating mermaid syntax..."
-    local validation_output="$temp_dir/validate.png"
-    if ! mmdc -i "$mmd_file" -o "$validation_output" 2>&1; then
-        log_error "Mermaid syntax validation failed"
-        log_error "Content:"
-        cat "$mmd_file" >&2
-        exit 3
-    fi
-    rm -f "$validation_output"
-
-    # Convert to PNG
+    # Convert to PNG (stderr captured; temp file lives inside temp_dir so EXIT trap cleans it up)
     log_info "Converting to PNG..."
+    local mmdc_stderr="$temp_dir/mmdc_stderr.txt"
     if ! mmdc -i "$mmd_file" -o "$png_file" \
         --backgroundColor white \
         --theme neutral \
-        --scale 2 2>&1; then
-        log_error "Mermaid to PNG conversion failed"
+        --scale 2 2>"$mmdc_stderr"; then
+        log_error "Mermaid conversion failed: $(cat "$mmdc_stderr")"
         exit 3
     fi
 
-    # Verify PNG was created
-    if [[ ! -f "$png_file" ]]; then
-        log_error "PNG file was not created"
+    # Verify PNG was created and is non-empty
+    if [[ ! -s "$png_file" ]]; then
+        log_error "Mermaid conversion produced empty output: $(cat "$mmdc_stderr")"
         exit 3
     fi
 
