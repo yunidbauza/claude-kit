@@ -398,6 +398,14 @@ op_search_jql() {
     local max_results="${2:-50}"
     [[ "$max_results" =~ ^[0-9]+$ ]] || max_results=50
 
+    # Sanity-check jq availability early. Without jq the URL-encoding step in
+    # jira-rest-api.sh would silently pass raw unencoded JQL to the API.
+    # Using echo (not jq) here because jq itself would be unavailable.
+    if ! command -v jq >/dev/null 2>&1; then
+        echo '{"api":"error","error":"jq is required but not installed","operation":"searchJiraIssuesUsingJql"}'
+        return 1
+    fi
+
     # Check REST availability
     if ! check_rest_available; then
         output_mcp_fallback "searchJiraIssuesUsingJql" "$(jq -n --arg jql "$jql" --argjson max "$max_results" '{jql: $jql, maxResults: $max}')" "REST credentials not configured"
