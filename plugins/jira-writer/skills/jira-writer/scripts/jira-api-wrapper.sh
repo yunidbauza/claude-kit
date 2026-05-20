@@ -141,30 +141,23 @@ op_create_issue() {
     local description="${4:-}"
 
     # Build the issue data
-    # Note: Jira API v3 requires description in ADF format
+    # Note: Jira API v3 requires description in ADF format. _to_adf_body
+    # passes through pre-built ADF docs unchanged, or wraps plain text.
     local issue_data
     if [[ -n "$description" ]]; then
+        local desc_adf
+        desc_adf=$(_to_adf_body "$description")
         issue_data=$(jq -n \
             --arg project "$project_key" \
             --arg type "$issue_type" \
             --arg summary "$summary" \
-            --arg desc "$description" \
+            --argjson desc "$desc_adf" \
             '{
                 "fields": {
                     "project": {"key": $project},
                     "issuetype": {"name": $type},
                     "summary": $summary,
-                    "description": {
-                        "type": "doc",
-                        "version": 1,
-                        "content": [{
-                            "type": "paragraph",
-                            "content": [{
-                                "type": "text",
-                                "text": $desc
-                            }]
-                        }]
-                    }
+                    "description": $desc
                 }
             }')
     else

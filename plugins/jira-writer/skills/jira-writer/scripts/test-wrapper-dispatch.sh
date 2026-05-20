@@ -160,6 +160,46 @@ assert_eq "op_add_comment non-ADF JSON: literal text preserved" \
     '{"foo":"bar"}' \
     "$(printf '%s' "$CAPTURED_COMMENT_DATA" | jq -r '.body.content[0].content[0].text')"
 
+# --- op_create_issue: stub jira_create_issue to capture issue_data ---
+# Use a separate temp file so this doesn't collide with comment captures.
+_CREATE_CAPTURE_FILE="$(mktemp)"
+# Assumes script-mode execution (not sourced); see file header.
+trap 'rm -f "$_COMMENT_CAPTURE_FILE" "$_CREATE_CAPTURE_FILE"' EXIT
+jira_create_issue() {
+    # $1 = data
+    printf '%s' "$1" > "$_CREATE_CAPTURE_FILE"
+    printf '%s' '{"id":"10001","key":"PROJ-1","self":"http://example/issue/PROJ-1"}'
+    return 0
+}
+
+# Plain text description -> single paragraph
+> "$_CREATE_CAPTURE_FILE"
+op_create_issue PROJ Task "Summary" "plain desc" >/dev/null
+captured=$(cat "$_CREATE_CAPTURE_FILE")
+assert_eq "op_create_issue plain desc: description.content[0].type" \
+    "paragraph" \
+    "$(printf '%s' "$captured" | jq -r '.fields.description.content[0].type')"
+assert_eq "op_create_issue plain desc: text node value" \
+    "plain desc" \
+    "$(printf '%s' "$captured" | jq -r '.fields.description.content[0].content[0].text')"
+
+# ADF description -> passed through unchanged
+adf_in='{"type":"doc","version":1,"content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"item"}]}]}]}]}'
+> "$_CREATE_CAPTURE_FILE"
+op_create_issue PROJ Task "Summary" "$adf_in" >/dev/null
+captured=$(cat "$_CREATE_CAPTURE_FILE")
+assert_eq "op_create_issue ADF desc: description equals input ADF" \
+    "$(printf '%s' "$adf_in" | jq -cS .)" \
+    "$(printf '%s' "$captured" | jq -cS '.fields.description')"
+
+# Empty description -> description field absent (unchanged legacy behavior)
+> "$_CREATE_CAPTURE_FILE"
+op_create_issue PROJ Task "Summary Only" >/dev/null
+captured=$(cat "$_CREATE_CAPTURE_FILE")
+assert_eq "op_create_issue empty desc: description field is absent" \
+    "false" \
+    "$(printf '%s' "$captured" | jq -r '.fields | has("description")')"
+
 # --- summary ---
 echo
 printf "Total: %d passed, %d failed\n" "$PASS" "$FAIL"
