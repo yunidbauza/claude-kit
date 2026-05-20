@@ -39,6 +39,13 @@ export JIRA_WRAPPER_TEST_MODE
 # shellcheck source=jira-api-wrapper.sh
 source "$SCRIPT_DIR/jira-api-wrapper.sh"
 
+# --- Cleanup registry: any test that creates a temp file appends its path
+# to _CLEANUP_FILES, and the EXIT trap removes them all. Avoids the
+# trap-accumulation hazard where each new temp file's trap would override
+# the previous one's cleanup.
+_CLEANUP_FILES=()
+trap 'rm -f "${_CLEANUP_FILES[@]:-}"' EXIT
+
 # --- normalize_op: identity for canonical ops ---
 assert_eq "canonical get_issue passes through" "get_issue" "$(normalize_op get_issue)"
 assert_eq "canonical create_issue passes through" "create_issue" "$(normalize_op create_issue)"
@@ -123,8 +130,7 @@ export JIRA_API_KEY="user@example.com:fake-token"
 
 # Use a temp file to capture data from within command-substitution subshells.
 _COMMENT_CAPTURE_FILE="$(mktemp)"
-# Assumes script-mode execution (not sourced); see file header.
-trap 'rm -f "$_COMMENT_CAPTURE_FILE"' EXIT
+_CLEANUP_FILES+=("$_COMMENT_CAPTURE_FILE")
 jira_add_comment() {
     # $1 = issue_key, $2 = data
     printf '%s' "$2" > "$_COMMENT_CAPTURE_FILE"
@@ -163,8 +169,7 @@ assert_eq "op_add_comment non-ADF JSON: literal text preserved" \
 # --- op_create_issue: stub jira_create_issue to capture issue_data ---
 # Use a separate temp file so this doesn't collide with comment captures.
 _CREATE_CAPTURE_FILE="$(mktemp)"
-# Assumes script-mode execution (not sourced); see file header.
-trap 'rm -f "$_COMMENT_CAPTURE_FILE" "$_CREATE_CAPTURE_FILE"' EXIT
+_CLEANUP_FILES+=("$_CREATE_CAPTURE_FILE")
 jira_create_issue() {
     # $1 = data
     printf '%s' "$1" > "$_CREATE_CAPTURE_FILE"
