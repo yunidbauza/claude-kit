@@ -12,8 +12,14 @@
 # that handles API selection and fallback signaling.
 #
 # Output (JSON):
-#   On success: { "api": "rest", "data": {...} }
-#   On REST failure: { "api": "mcp_fallback", "operation": "...", "params": {...} }
+#   On success:
+#     { "api": "rest", "data": {...} }
+#   On REST failure:
+#     { "api": "mcp_fallback", "operation": "...", "params": {...},
+#       "rest_error": "...", "note": "..." (optional) }
+#   The "note" field is present when the original user input was a pre-built
+#   ADF document — it warns the agent that the MCP fallback path will render
+#   the content as text, not rich ADF.
 #
 # Environment Variables:
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
