@@ -205,6 +205,22 @@ assert_eq "op_create_issue empty desc: description field is absent" \
     "false" \
     "$(printf '%s' "$captured" | jq -r '.fields | has("description")')"
 
+# --- output_mcp_fallback: 3-arg form (legacy) — no .note field ---
+out=$(output_mcp_fallback "someOp" '{"x":1}' "boom" 2>/dev/null)
+assert_eq "output_mcp_fallback 3-arg: api is mcp_fallback" "mcp_fallback" "$(printf '%s' "$out" | jq -r '.api')"
+assert_eq "output_mcp_fallback 3-arg: operation" "someOp" "$(printf '%s' "$out" | jq -r '.operation')"
+assert_eq "output_mcp_fallback 3-arg: rest_error" "boom" "$(printf '%s' "$out" | jq -r '.rest_error')"
+assert_eq "output_mcp_fallback 3-arg: no note field" "false" "$(printf '%s' "$out" | jq -r 'has("note")')"
+
+# --- output_mcp_fallback: 4-arg form — note merged ---
+out=$(output_mcp_fallback "someOp" '{"x":1}' "boom" "original body was ADF" 2>/dev/null)
+assert_eq "output_mcp_fallback 4-arg: note present" "original body was ADF" "$(printf '%s' "$out" | jq -r '.note')"
+assert_eq "output_mcp_fallback 4-arg: other fields unchanged" "someOp" "$(printf '%s' "$out" | jq -r '.operation')"
+
+# --- output_mcp_fallback: 4-arg form, empty note — field omitted ---
+out=$(output_mcp_fallback "someOp" '{"x":1}' "boom" "" 2>/dev/null)
+assert_eq "output_mcp_fallback empty note: field absent" "false" "$(printf '%s' "$out" | jq -r 'has("note")')"
+
 # --- summary ---
 echo
 printf "Total: %d passed, %d failed\n" "$PASS" "$FAIL"

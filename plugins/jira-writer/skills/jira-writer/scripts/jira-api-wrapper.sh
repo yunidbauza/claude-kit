@@ -52,23 +52,41 @@ output_rest_success() {
 }
 
 # Output MCP fallback signal
+# Args: operation, params, error, [note]
+# If note is non-empty, it's merged into the envelope as .note.
 output_mcp_fallback() {
     local operation="$1"
     local params="$2"
     local error="${3:-}"
+    local note="${4:-}"
 
     log_warn "REST API failed, signaling MCP fallback..."
 
-    jq -n \
-        --arg operation "$operation" \
-        --argjson params "$params" \
-        --arg error "$error" \
-        '{
-            "api": "mcp_fallback",
-            "operation": $operation,
-            "params": $params,
-            "rest_error": $error
-        }'
+    if [[ -n "$note" ]]; then
+        jq -n \
+            --arg operation "$operation" \
+            --argjson params "$params" \
+            --arg error "$error" \
+            --arg note "$note" \
+            '{
+                "api": "mcp_fallback",
+                "operation": $operation,
+                "params": $params,
+                "rest_error": $error,
+                "note": $note
+            }'
+    else
+        jq -n \
+            --arg operation "$operation" \
+            --argjson params "$params" \
+            --arg error "$error" \
+            '{
+                "api": "mcp_fallback",
+                "operation": $operation,
+                "params": $params,
+                "rest_error": $error
+            }'
+    fi
 }
 
 # Check if REST API is available
