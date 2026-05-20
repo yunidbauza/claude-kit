@@ -85,7 +85,7 @@ check_rest_available() {
 #   and array .content, echo it unchanged (pass-through).
 # - Otherwise wrap INPUT as a single plain-text paragraph (legacy behavior).
 _to_adf_body() {
-    local input="$1"
+    local input="${1:-}"
     # Cheap pre-filter: must start with '{' (allow leading whitespace) to
     # even consider as JSON. Anything else is plain text.
     if [[ "$input" =~ ^[[:space:]]*\{ ]]; then
@@ -95,7 +95,7 @@ _to_adf_body() {
             and (.version | type) == "number"
             and (.content | type) == "array"
         ' >/dev/null 2>&1; then
-            printf '%s' "$input"
+            printf '%s\n' "$input"
             return 0
         fi
     fi
