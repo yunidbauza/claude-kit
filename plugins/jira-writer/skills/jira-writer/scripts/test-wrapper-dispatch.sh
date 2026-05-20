@@ -116,14 +116,14 @@ assert_eq "_to_adf_body malformed JSON: falls back to plain-text wrap" "paragrap
 assert_eq "_to_adf_body malformed JSON: literal text preserved" "{ malformed" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
 
 # --- op_add_comment: stub jira_add_comment to capture the data it receives ---
-# Save originals so later tests can override differently if needed.
-JIRA_DOMAIN_SAVE="${JIRA_DOMAIN:-}"
-JIRA_API_KEY_SAVE="${JIRA_API_KEY:-}"
+# Test-mode credentials. Subsequent tests assume these are set; Task 5
+# unsets them explicitly when testing the no-credentials fallback path.
 export JIRA_DOMAIN="example.atlassian.net"
 export JIRA_API_KEY="user@example.com:fake-token"
 
 # Use a temp file to capture data from within command-substitution subshells.
 _COMMENT_CAPTURE_FILE="$(mktemp)"
+# Assumes script-mode execution (not sourced); see file header.
 trap 'rm -f "$_COMMENT_CAPTURE_FILE"' EXIT
 jira_add_comment() {
     # $1 = issue_key, $2 = data
