@@ -221,6 +221,47 @@ assert_eq "output_mcp_fallback 4-arg: other fields unchanged" "someOp" "$(printf
 out=$(output_mcp_fallback "someOp" '{"x":1}' "boom" "" 2>/dev/null)
 assert_eq "output_mcp_fallback empty note: field absent" "false" "$(printf '%s' "$out" | jq -r 'has("note")')"
 
+# --- MCP fallback note: unset credentials, keep existing stubs in place ---
+# Stubs from Tasks 2 & 3 (jira_add_comment, jira_create_issue) are still
+# defined in this shell, but the no-credentials branch returns before
+# calling them, so they won't fire here.
+unset JIRA_DOMAIN JIRA_API_KEY
+
+# --- add_comment with ADF body when REST credentials missing ---
+adf_in='{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"hi"}]}]}'
+out=$(op_add_comment PROJ-1 "$adf_in" 2>/dev/null) || true
+note=$(printf '%s' "$out" | jq -r '.note // empty')
+if [[ -n "$note" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_add_comment ADF+no-creds: note set\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_add_comment ADF+no-creds: expected .note in envelope, got:\n        %s\n" "$out"
+fi
+
+# --- add_comment with PLAIN body when REST creds missing => no note ---
+out=$(op_add_comment PROJ-1 "plain text" 2>/dev/null) || true
+has_note=$(printf '%s' "$out" | jq -r 'has("note")')
+if [[ "$has_note" == "false" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_add_comment plain+no-creds: no note field\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_add_comment plain+no-creds: unexpected .note in envelope:\n        %s\n" "$out"
+fi
+
+# --- create_issue with ADF description when REST creds missing ---
+adf_in='{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"H"}]}]}'
+out=$(op_create_issue PROJ Task "S" "$adf_in" 2>/dev/null) || true
+note=$(printf '%s' "$out" | jq -r '.note // empty')
+if [[ -n "$note" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_create_issue ADF+no-creds: note set\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_create_issue ADF+no-creds: expected .note in envelope, got:\n        %s\n" "$out"
+fi
+
 # --- summary ---
 echo
 printf "Total: %d passed, %d failed\n" "$PASS" "$FAIL"

@@ -127,6 +127,21 @@ _to_adf_body() {
     }'
 }
 
+# _input_was_adf INPUT
+# Returns 0 (success) if INPUT is a valid ADF doc as recognized by _to_adf_body.
+# Used by ops to decide whether to attach an explanatory note when falling
+# back to MCP (which renders raw strings as markdown/text, not ADF).
+_input_was_adf() {
+    local input="${1:-}"
+    [[ "$input" =~ ^[[:space:]]*\{ ]] || return 1
+    printf '%s' "$input" | jq -e '
+        type == "object"
+        and .type == "doc"
+        and (.version | type) == "number"
+        and (.content | type) == "array"
+    ' >/dev/null 2>&1
+}
+
 # --- Operation Handlers ---
 
 # Get issue operation
@@ -194,7 +209,10 @@ op_create_issue() {
 
     # Check REST availability
     if ! check_rest_available; then
-        output_mcp_fallback "createJiraIssue" "$issue_data" "REST credentials not configured"
+        local _note=""
+        [[ -n "$description" ]] && _input_was_adf "$description" \
+            && _note="Original description was ADF; MCP fallback will render as text."
+        output_mcp_fallback "createJiraIssue" "$issue_data" "REST credentials not configured" "$_note"
         return 1
     fi
 
@@ -217,7 +235,10 @@ op_create_issue() {
                 summary: $summary,
                 description: $desc
             }')
-        output_mcp_fallback "createJiraIssue" "$mcp_params" "$result"
+        local _note=""
+        [[ -n "$description" ]] && _input_was_adf "$description" \
+            && _note="Original description was ADF; MCP fallback will render as text."
+        output_mcp_fallback "createJiraIssue" "$mcp_params" "$result" "$_note"
         return 1
     fi
 }
@@ -260,7 +281,12 @@ op_add_comment() {
 
     # Check REST availability
     if ! check_rest_available; then
-        output_mcp_fallback "addCommentToJiraIssue" "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" "REST credentials not configured"
+        local _note=""
+        _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
+        output_mcp_fallback "addCommentToJiraIssue" \
+            "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" \
+            "REST credentials not configured" \
+            "$_note"
         return 1
     fi
 
@@ -277,7 +303,12 @@ op_add_comment() {
         output_rest_success "$result"
         return 0
     else
-        output_mcp_fallback "addCommentToJiraIssue" "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" "$result"
+        local _note=""
+        _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
+        output_mcp_fallback "addCommentToJiraIssue" \
+            "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" \
+            "$result" \
+            "$_note"
         return 1
     fi
 }
