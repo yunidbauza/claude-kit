@@ -79,6 +79,42 @@ first_suggestion="$(suggest_op get_isue | cut -d',' -f1 | tr -d '[:space:]')"
 assert_eq "suggest_op get_isue first suggestion is get_issue" "get_issue" "$first_suggestion"
 assert_contains "suggest_op projct includes get_projects" "get_projects" "$(suggest_op projct)"
 
+# --- _to_adf_body: plain text wraps in paragraph ---
+out=$(_to_adf_body "plain text")
+assert_eq "_to_adf_body plain: top type is doc" "doc" "$(printf '%s' "$out" | jq -r '.type')"
+assert_eq "_to_adf_body plain: version is 1" "1" "$(printf '%s' "$out" | jq -r '.version')"
+assert_eq "_to_adf_body plain: content[0].type is paragraph" "paragraph" "$(printf '%s' "$out" | jq -r '.content[0].type')"
+assert_eq "_to_adf_body plain: text node value" "plain text" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
+# --- _to_adf_body: valid ADF passes through unchanged ---
+adf_in='{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"H"}]}]}'
+out=$(_to_adf_body "$adf_in")
+assert_eq "_to_adf_body ADF: passes through identical" "$(printf '%s' "$adf_in" | jq -cS .)" "$(printf '%s' "$out" | jq -cS .)"
+
+# --- _to_adf_body: non-ADF JSON-shaped input falls back to plain text ---
+out=$(_to_adf_body '{"foo":"bar"}')
+assert_eq "_to_adf_body non-ADF JSON: type still doc" "doc" "$(printf '%s' "$out" | jq -r '.type')"
+assert_eq "_to_adf_body non-ADF JSON: text node is literal JSON" '{"foo":"bar"}' "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
+# --- _to_adf_body: ADF with leading whitespace recognized ---
+adf_ws='   {"type":"doc","version":1,"content":[]}'
+out=$(_to_adf_body "$adf_ws")
+assert_eq "_to_adf_body ADF+whitespace: content array empty" "0" "$(printf '%s' "$out" | jq '.content | length')"
+assert_eq "_to_adf_body ADF+whitespace: top type is doc" "doc" "$(printf '%s' "$out" | jq -r '.type')"
+
+# --- _to_adf_body: ADF with string version rejected (strict check) ---
+out=$(_to_adf_body '{"type":"doc","version":"1","content":[]}')
+assert_eq "_to_adf_body string version: falls back to plain-text wrap" "paragraph" "$(printf '%s' "$out" | jq -r '.content[0].type')"
+
+# --- _to_adf_body: non-JSON input ---
+out=$(_to_adf_body "not json at all")
+assert_eq "_to_adf_body non-JSON: text node value" "not json at all" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
+# --- _to_adf_body: malformed JSON ---
+out=$(_to_adf_body '{ malformed')
+assert_eq "_to_adf_body malformed JSON: falls back to plain-text wrap" "paragraph" "$(printf '%s' "$out" | jq -r '.content[0].type')"
+assert_eq "_to_adf_body malformed JSON: literal text preserved" "{ malformed" "$(printf '%s' "$out" | jq -r '.content[0].content[0].text')"
+
 # --- summary ---
 echo
 printf "Total: %d passed, %d failed\n" "$PASS" "$FAIL"

@@ -79,6 +79,36 @@ check_rest_available() {
     return 0
 }
 
+# _to_adf_body INPUT
+# Echoes a valid ADF document JSON to stdout.
+# - If INPUT parses as a JSON object with .type == "doc", numeric .version,
+#   and array .content, echo it unchanged (pass-through).
+# - Otherwise wrap INPUT as a single plain-text paragraph (legacy behavior).
+_to_adf_body() {
+    local input="$1"
+    # Cheap pre-filter: must start with '{' (allow leading whitespace) to
+    # even consider as JSON. Anything else is plain text.
+    if [[ "$input" =~ ^[[:space:]]*\{ ]]; then
+        if printf '%s' "$input" | jq -e '
+            type == "object"
+            and .type == "doc"
+            and (.version | type) == "number"
+            and (.content | type) == "array"
+        ' >/dev/null 2>&1; then
+            printf '%s' "$input"
+            return 0
+        fi
+    fi
+    jq -n --arg text "$input" '{
+        type: "doc",
+        version: 1,
+        content: [{
+            type: "paragraph",
+            content: [{ type: "text", text: $text }]
+        }]
+    }'
+}
+
 # --- Operation Handlers ---
 
 # Get issue operation
