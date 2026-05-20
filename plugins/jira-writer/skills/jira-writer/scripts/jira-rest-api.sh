@@ -135,7 +135,7 @@ _jira_post() {
         -X POST \
         -H "Authorization: Basic $auth_header" \
         -H "Content-Type: application/json" \
-        -d "$data" \
+        --data-raw "$data" \
         "https://$JIRA_DOMAIN$endpoint"
 }
 
@@ -150,7 +150,7 @@ _jira_put() {
         -X PUT \
         -H "Authorization: Basic $auth_header" \
         -H "Content-Type: application/json" \
-        -d "$data" \
+        --data-raw "$data" \
         "https://$JIRA_DOMAIN$endpoint"
 }
 
