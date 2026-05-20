@@ -14,12 +14,17 @@
 # Output (JSON):
 #   On success:
 #     { "api": "rest", "data": {...} }
-#   On REST failure:
+#   On REST failure with MCP fallback available:
 #     { "api": "mcp_fallback", "operation": "...", "params": {...},
 #       "rest_error": "...", "note": "..." (optional) }
 #   The "note" field is present when the original user input was a pre-built
 #   ADF document — it warns the agent that the MCP fallback path will render
 #   the content as text, not rich ADF.
+#   On non-recoverable error (no MCP retry path, e.g. attachment upload):
+#     { "api": "error", "operation": "...", "params": {...},
+#       "rest_error": "...", "note": "..." (optional) }
+#   The "error" envelope shares the same fields as "mcp_fallback" but has
+#   api:"error" and signals that no MCP retry is possible.
 #
 # Environment Variables:
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
@@ -506,12 +511,18 @@ op_upload_attachment() {
     local file_path="$2"
     local filename="${3:-}"
 
-    # Note: MCP cannot upload attachments, so no fallback available
+    # Note: MCP cannot upload attachments, so no fallback available.
+    # Both error branches emit the same envelope shape (api:"error") with
+    # standard operation/params fields so agents can parse them uniformly.
+    # Unlike mcp_fallback, api:"error" is non-recoverable — there is no MCP
+    # retry path for attachment uploads.
     if ! check_rest_available; then
-        jq -n '{
+        jq -n --arg key "$issue_key" --arg file "$file_path" --arg name "$filename" '{
             "api": "error",
-            "error": "REST API required for attachments (MCP cannot upload files)",
-            "setup_required": ["JIRA_DOMAIN", "JIRA_API_KEY"]
+            "operation": "uploadJiraAttachment",
+            "params": {issueIdOrKey: $key, file_path: $file, filename: $name},
+            "rest_error": "REST credentials not configured",
+            "note": "Attachment upload requires REST credentials; no MCP fallback available."
         }'
         return 1
     fi
@@ -530,10 +541,12 @@ op_upload_attachment() {
         output_rest_success "$result"
         return 0
     else
-        jq -n --arg error "$result" '{
+        jq -n --arg key "$issue_key" --arg file "$file_path" --arg name "$filename" --arg error "$result" '{
             "api": "error",
-            "error": $error,
-            "note": "Attachment upload is REST-only (no MCP fallback available)"
+            "operation": "uploadJiraAttachment",
+            "params": {issueIdOrKey: $key, file_path: $file, filename: $name},
+            "rest_error": $error,
+            "note": "Attachment upload is REST-only; no MCP fallback available."
         }'
         return 1
     fi
