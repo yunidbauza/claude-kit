@@ -63,6 +63,12 @@ main() {
     local success_count=0
     local fail_count=0
 
+    # Single stderr capture file reused across iterations, registered with an
+    # EXIT trap so SIGINT/SIGTERM mid-loop doesn't leak the file to /tmp.
+    local upload_stderr
+    upload_stderr=$(mktemp)
+    trap 'rm -f "$upload_stderr"' EXIT
+
     # Process each diagram
     for i in $(seq 0 $((count - 1))); do
         local code
@@ -73,9 +79,9 @@ main() {
 
         log_info "Processing diagram $((i+1))/$count: $filename"
 
-        # Call single upload script — capture stdout (JSON) and stderr separately
-        local upload_stderr
-        upload_stderr=$(mktemp)
+        # Call single upload script — capture stdout (JSON) and stderr separately.
+        # Truncate the stderr file at the start of each iteration.
+        : > "$upload_stderr"
         local upload_stdout
         local upload_rc=0
         local result
@@ -101,7 +107,6 @@ main() {
             fail_count=$((fail_count + 1))
             log_warn "Failed to process $filename: $errmsg"
         fi
-        rm -f "$upload_stderr"
 
         results=$(echo "$results" | jq ". + [$result]")
     done
