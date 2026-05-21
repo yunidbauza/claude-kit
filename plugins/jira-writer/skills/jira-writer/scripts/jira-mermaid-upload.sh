@@ -166,9 +166,11 @@ main() {
     # Upload to Jira
     log_info "Uploading to Jira issue $issue_key..."
 
-    # Base64 encode the API key for Basic auth
+    # Base64 encode the API key for Basic auth.
+    # tr -d '\n' strips GNU coreutils' default 76-char wrap; without it, long
+    # tokens produce a multi-line Authorization header that curl rejects on Linux.
     local auth_header
-    auth_header=$(echo -n "$JIRA_API_KEY" | base64)
+    auth_header=$(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')
 
     local response
     response=$(curl -s -w "\n%{http_code}" -X POST \
