@@ -582,6 +582,10 @@ op_get_remote_links() {
 }
 
 # Test connection operation
+# Recommended values match test-jira-connection.sh:
+#   "rest_api"       - REST authenticated successfully
+#   "rest_fix_auth"  - REST creds present but auth failed
+#   "rest_configure" - REST creds missing
 op_test_connection() {
     # Check REST availability first
     if ! check_rest_available; then
@@ -590,7 +594,7 @@ op_test_connection() {
                 "available": false,
                 "reason": "Credentials not configured (JIRA_DOMAIN and/or JIRA_API_KEY missing)"
             },
-            "recommended": "mcp"
+            "recommended": "rest_configure"
         }'
         return 1
     fi
@@ -605,7 +609,7 @@ op_test_connection() {
                 "authenticated": true,
                 "user": $user.user
             },
-            "recommended": "rest"
+            "recommended": "rest_api"
         }'
         return 0
     else
@@ -615,7 +619,7 @@ op_test_connection() {
                 "authenticated": false,
                 "error": $error
             },
-            "recommended": "mcp"
+            "recommended": "rest_fix_auth"
         }'
         return 1
     fi
@@ -643,8 +647,10 @@ print_usage() {
     echo "  test_connection                  - Test API connection" >&2
     echo "" >&2
     echo "Output:" >&2
-    echo "  Success: {\"api\": \"rest\", \"data\": {...}}" >&2
-    echo "  Fallback: {\"api\": \"mcp_fallback\", \"operation\": \"...\", \"params\": {...}}" >&2
+    echo "  Success:       {\"api\": \"rest\", \"data\": {...}}" >&2
+    echo "  MCP fallback:  {\"api\": \"mcp_fallback\", \"operation\": \"...\", \"params\": {...}, \"rest_error\": \"...\", \"note\": \"...\" (optional)}" >&2
+    echo "  Non-recoverable error (no MCP retry path, e.g. attachment upload):" >&2
+    echo "                 {\"api\": \"error\", \"operation\": \"...\", \"params\": {...}, \"rest_error\": \"...\"}" >&2
 }
 
 # --- Operation name normalization ---
