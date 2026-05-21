@@ -14,12 +14,17 @@
 # Output (JSON):
 #   On success:
 #     { "api": "rest", "data": {...} }
-#   On REST failure:
+#   On REST failure with MCP fallback available:
 #     { "api": "mcp_fallback", "operation": "...", "params": {...},
 #       "rest_error": "...", "note": "..." (optional) }
 #   The "note" field is present when the original user input was a pre-built
 #   ADF document — it warns the agent that the MCP fallback path will render
 #   the content as text, not rich ADF.
+#   On non-recoverable error (no MCP retry path, e.g. attachment upload):
+#     { "api": "error", "operation": "...", "params": {...},
+#       "rest_error": "...", "note": "..." (optional) }
+#   The "error" envelope shares the same fields as "mcp_fallback" but has
+#   api:"error" and signals that no MCP retry is possible.
 #
 # Environment Variables:
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
@@ -103,6 +108,15 @@ check_rest_available() {
     return 0
 }
 
+# Shared jq filter for ADF document detection. Used by _to_adf_body and
+# _input_was_adf to keep their definitions of "is this ADF?" in lockstep.
+_ADF_DOC_JQ_FILTER='
+    type == "object"
+    and .type == "doc"
+    and (.version | type) == "number"
+    and (.content | type) == "array"
+'
+
 # _to_adf_body INPUT
 # Echoes a valid ADF document JSON to stdout.
 # - If INPUT parses as a JSON object with .type == "doc", numeric .version,
@@ -113,12 +127,7 @@ _to_adf_body() {
     # Cheap pre-filter: must start with '{' (allow leading whitespace) to
     # even consider as JSON. Anything else is plain text.
     if [[ "$input" =~ ^[[:space:]]*\{ ]]; then
-        if printf '%s' "$input" | jq -e '
-            type == "object"
-            and .type == "doc"
-            and (.version | type) == "number"
-            and (.content | type) == "array"
-        ' >/dev/null 2>&1; then
+        if printf '%s' "$input" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1; then
             printf '%s\n' "$input"
             return 0
         fi
@@ -140,12 +149,7 @@ _to_adf_body() {
 _input_was_adf() {
     local input="${1:-}"
     [[ "$input" =~ ^[[:space:]]*\{ ]] || return 1
-    printf '%s' "$input" | jq -e '
-        type == "object"
-        and .type == "doc"
-        and (.version | type) == "number"
-        and (.content | type) == "array"
-    ' >/dev/null 2>&1
+    printf '%s' "$input" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1
 }
 
 # --- Operation Handlers ---
@@ -254,9 +258,27 @@ op_update_issue() {
     local issue_key="$1"
     local fields_json="$2"
 
+    # Validate JSON input before anything else so the error returns regardless
+    # of credential state.
+    if ! printf '%s' "$fields_json" | jq -e . >/dev/null 2>&1; then
+        jq -n --arg key "$issue_key" --arg input "$fields_json" '{
+            "api": "error",
+            "error": "Invalid JSON in fields argument",
+            "operation": "update_issue",
+            "issue_key": $key,
+            "input": $input
+        }'
+        return 1
+    fi
+
+    # Build MCP params once, reused at both fallback sites.
+    local mcp_params
+    mcp_params=$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" \
+        '{issueIdOrKey: $key, fields: $fields}')
+
     # Check REST availability
     if ! check_rest_available; then
-        output_mcp_fallback "editJiraIssue" "$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" '{issueIdOrKey: $key, fields: $fields}')" "REST credentials not configured"
+        output_mcp_fallback "editJiraIssue" "$mcp_params" "REST credentials not configured"
         return 1
     fi
 
@@ -275,7 +297,7 @@ op_update_issue() {
         fi
         return 0
     else
-        output_mcp_fallback "editJiraIssue" "$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" '{issueIdOrKey: $key, fields: $fields}')" "$result"
+        output_mcp_fallback "editJiraIssue" "$mcp_params" "$result"
         return 1
     fi
 }
@@ -375,6 +397,14 @@ op_search_jql() {
     local jql="$1"
     local max_results="${2:-50}"
     [[ "$max_results" =~ ^[0-9]+$ ]] || max_results=50
+
+    # Sanity-check jq availability early. Without jq the URL-encoding step in
+    # jira-rest-api.sh would silently pass raw unencoded JQL to the API.
+    # Using echo (not jq) here because jq itself would be unavailable.
+    if ! command -v jq >/dev/null 2>&1; then
+        echo '{"api":"error","error":"jq is required but not installed","operation":"searchJiraIssuesUsingJql"}'
+        return 1
+    fi
 
     # Check REST availability
     if ! check_rest_available; then
@@ -489,12 +519,18 @@ op_upload_attachment() {
     local file_path="$2"
     local filename="${3:-}"
 
-    # Note: MCP cannot upload attachments, so no fallback available
+    # Note: MCP cannot upload attachments, so no fallback available.
+    # Both error branches emit the same envelope shape (api:"error") with
+    # standard operation/params fields so agents can parse them uniformly.
+    # Unlike mcp_fallback, api:"error" is non-recoverable — there is no MCP
+    # retry path for attachment uploads.
     if ! check_rest_available; then
-        jq -n '{
+        jq -n --arg key "$issue_key" --arg file "$file_path" --arg name "$filename" '{
             "api": "error",
-            "error": "REST API required for attachments (MCP cannot upload files)",
-            "setup_required": ["JIRA_DOMAIN", "JIRA_API_KEY"]
+            "operation": "uploadJiraAttachment",
+            "params": {issueIdOrKey: $key, file_path: $file, filename: $name},
+            "rest_error": "REST credentials not configured",
+            "note": "Attachment upload requires REST credentials; no MCP fallback available."
         }'
         return 1
     fi
@@ -513,10 +549,12 @@ op_upload_attachment() {
         output_rest_success "$result"
         return 0
     else
-        jq -n --arg error "$result" '{
+        jq -n --arg key "$issue_key" --arg file "$file_path" --arg name "$filename" --arg error "$result" '{
             "api": "error",
-            "error": $error,
-            "note": "Attachment upload is REST-only (no MCP fallback available)"
+            "operation": "uploadJiraAttachment",
+            "params": {issueIdOrKey: $key, file_path: $file, filename: $name},
+            "rest_error": $error,
+            "note": "Attachment upload is REST-only; no MCP fallback available."
         }'
         return 1
     fi
@@ -544,6 +582,10 @@ op_get_remote_links() {
 }
 
 # Test connection operation
+# Recommended values match test-jira-connection.sh:
+#   "rest_api"       - REST authenticated successfully
+#   "rest_fix_auth"  - REST creds present but auth failed
+#   "rest_configure" - REST creds missing
 op_test_connection() {
     # Check REST availability first
     if ! check_rest_available; then
@@ -552,7 +594,7 @@ op_test_connection() {
                 "available": false,
                 "reason": "Credentials not configured (JIRA_DOMAIN and/or JIRA_API_KEY missing)"
             },
-            "recommended": "mcp"
+            "recommended": "rest_configure"
         }'
         return 1
     fi
@@ -567,7 +609,7 @@ op_test_connection() {
                 "authenticated": true,
                 "user": $user.user
             },
-            "recommended": "rest"
+            "recommended": "rest_api"
         }'
         return 0
     else
@@ -577,7 +619,7 @@ op_test_connection() {
                 "authenticated": false,
                 "error": $error
             },
-            "recommended": "mcp"
+            "recommended": "rest_fix_auth"
         }'
         return 1
     fi
@@ -605,8 +647,10 @@ print_usage() {
     echo "  test_connection                  - Test API connection" >&2
     echo "" >&2
     echo "Output:" >&2
-    echo "  Success: {\"api\": \"rest\", \"data\": {...}}" >&2
-    echo "  Fallback: {\"api\": \"mcp_fallback\", \"operation\": \"...\", \"params\": {...}}" >&2
+    echo "  Success:       {\"api\": \"rest\", \"data\": {...}}" >&2
+    echo "  MCP fallback:  {\"api\": \"mcp_fallback\", \"operation\": \"...\", \"params\": {...}, \"rest_error\": \"...\", \"note\": \"...\" (optional)}" >&2
+    echo "  Non-recoverable error (no MCP retry path, e.g. attachment upload):" >&2
+    echo "                 {\"api\": \"error\", \"operation\": \"...\", \"params\": {...}, \"rest_error\": \"...\"}" >&2
 }
 
 # --- Operation name normalization ---

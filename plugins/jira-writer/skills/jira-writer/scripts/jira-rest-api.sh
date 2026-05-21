@@ -86,7 +86,7 @@ _jira_get_auth_header() {
         _jira_log_error "JIRA_API_KEY not set"
         return 1
     fi
-    echo -n "$JIRA_API_KEY" | base64
+    echo -n "$JIRA_API_KEY" | base64 | tr -d '\n'
 }
 
 # Check if credentials are configured
@@ -135,7 +135,7 @@ _jira_post() {
         -X POST \
         -H "Authorization: Basic $auth_header" \
         -H "Content-Type: application/json" \
-        -d "$data" \
+        --data-raw "$data" \
         "https://$JIRA_DOMAIN$endpoint"
 }
 
@@ -150,7 +150,7 @@ _jira_put() {
         -X PUT \
         -H "Authorization: Basic $auth_header" \
         -H "Content-Type: application/json" \
-        -d "$data" \
+        --data-raw "$data" \
         "https://$JIRA_DOMAIN$endpoint"
 }
 

@@ -262,6 +262,64 @@ else
     printf "FAIL  op_create_issue ADF+no-creds: expected .note in envelope, got:\n        %s\n" "$out"
 fi
 
+# --- op_add_comment REST-fail + ADF emits note ---
+# Replace the existing jira_add_comment stub with one that returns failure.
+# Restore credentials (Task 5's no-creds tests already unset them).
+export JIRA_DOMAIN="example.atlassian.net"
+export JIRA_API_KEY="user@example.com:fake-token"
+
+jira_add_comment() {
+    printf '%s' "$2" > "$_COMMENT_CAPTURE_FILE"
+    echo "simulated REST failure" >&2
+    return 1
+}
+
+adf_in='{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"hi"}]}]}'
+out=$(op_add_comment PROJ-1 "$adf_in" 2>/dev/null) || true
+note=$(printf '%s' "$out" | jq -r '.note // empty')
+if [[ -n "$note" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_add_comment REST-fail+ADF: note set\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_add_comment REST-fail+ADF: expected .note, got:\n        %s\n" "$out"
+fi
+
+# --- op_create_issue REST-fail + ADF emits note ---
+jira_create_issue() {
+    printf '%s' "$1" > "$_CREATE_CAPTURE_FILE"
+    echo "simulated REST failure" >&2
+    return 1
+}
+
+adf_in='{"type":"doc","version":1,"content":[{"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"H"}]}]}'
+out=$(op_create_issue PROJ Task "S" "$adf_in" 2>/dev/null) || true
+note=$(printf '%s' "$out" | jq -r '.note // empty')
+if [[ -n "$note" ]]; then
+    PASS=$((PASS + 1))
+    printf "PASS  op_create_issue REST-fail+ADF: note set\n"
+else
+    FAIL=$((FAIL + 1))
+    printf "FAIL  op_create_issue REST-fail+ADF: expected .note, got:\n        %s\n" "$out"
+fi
+
+# --- op_upload_attachment no-creds envelope shape ---
+unset JIRA_DOMAIN JIRA_API_KEY
+
+out=$(op_upload_attachment PROJ-1 /tmp/fakefile.png 2>/dev/null) || true
+assert_eq "op_upload_attachment no-creds: api is error" "error" "$(printf '%s' "$out" | jq -r '.api')"
+assert_eq "op_upload_attachment no-creds: operation is uploadJiraAttachment" "uploadJiraAttachment" "$(printf '%s' "$out" | jq -r '.operation')"
+assert_eq "op_upload_attachment no-creds: rest_error mentions credentials" "true" "$(printf '%s' "$out" | jq -r '.rest_error | contains("credentials")')"
+
+# --- op_update_issue rejects malformed JSON ---
+# Credentials set so the error comes from JSON validation, not cred check.
+export JIRA_DOMAIN="example.atlassian.net"
+export JIRA_API_KEY="user@example.com:fake-token"
+
+out=$(op_update_issue PROJ-1 'not json' 2>/dev/null) || true
+assert_eq "op_update_issue malformed JSON: api is error" "error" "$(printf '%s' "$out" | jq -r '.api')"
+assert_eq "op_update_issue malformed JSON: error mentions Invalid JSON" "true" "$(printf '%s' "$out" | jq -r '.error | contains("Invalid JSON")')"
+
 # --- summary ---
 echo
 printf "Total: %d passed, %d failed\n" "$PASS" "$FAIL"

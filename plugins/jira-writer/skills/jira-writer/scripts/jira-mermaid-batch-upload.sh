@@ -63,6 +63,12 @@ main() {
     local success_count=0
     local fail_count=0
 
+    # Single stderr capture file reused across iterations, registered with an
+    # EXIT trap so SIGINT/SIGTERM mid-loop doesn't leak the file to /tmp.
+    local upload_stderr
+    upload_stderr=$(mktemp)
+    trap 'rm -f "$upload_stderr"' EXIT
+
     # Process each diagram
     for i in $(seq 0 $((count - 1))); do
         local code
@@ -73,18 +79,33 @@ main() {
 
         log_info "Processing diagram $((i+1))/$count: $filename"
 
-        # Call single upload script
+        # Call single upload script — capture stdout (JSON) and stderr separately.
+        # Truncate the stderr file at the start of each iteration.
+        : > "$upload_stderr"
+        local upload_stdout
+        local upload_rc=0
         local result
-        local json_result
-        if result=$("$SCRIPT_DIR/jira-mermaid-upload.sh" "$issue_key" "$code" "$filename" 2>&1); then
-            # Extract JSON from output (mmdc outputs noise to stdout before the JSON)
-            json_result=$(echo "$result" | awk '/^\{/,/^\}/')
-            result=$(echo "$json_result" | jq '. + {success: true}')
+        upload_stdout=$("$SCRIPT_DIR/jira-mermaid-upload.sh" "$issue_key" "$code" "$filename" 2>"$upload_stderr") || upload_rc=$?
+        if [[ $upload_rc -eq 0 ]]; then
+            # stdout is the JSON payload — no awk stripping needed
+            local attachment_id content_url
+            attachment_id=$(printf '%s' "$upload_stdout" | jq -r '.attachment_id // empty')
+            content_url=$(printf '%s' "$upload_stdout" | jq -r '.content_url // empty')
+            result=$(jq -n \
+                --arg fn "$filename" \
+                --arg id "$attachment_id" \
+                --arg url "$content_url" \
+                '{filename: $fn, attachment_id: $id, content_url: $url, success: true}')
             success_count=$((success_count + 1))
         else
-            result=$(jq -n --arg fn "$filename" --arg err "Upload failed" '{filename: $fn, success: false, error: $err}')
+            local errmsg
+            errmsg=$(cat "$upload_stderr")
+            result=$(jq -n \
+                --arg fn "$filename" \
+                --arg err "$errmsg" \
+                '{filename: $fn, success: false, error: $err}')
             fail_count=$((fail_count + 1))
-            log_warn "Failed to process $filename"
+            log_warn "Failed to process $filename: $errmsg"
         fi
 
         results=$(echo "$results" | jq ". + [$result]")

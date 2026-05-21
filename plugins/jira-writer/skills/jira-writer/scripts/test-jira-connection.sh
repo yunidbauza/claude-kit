@@ -15,25 +15,25 @@
 #       "user": { "displayName": "...", "email": "..." }
 #     },
 #     "mcp": {
-#       "available": false,
-#       "reason": "Cannot be verified from shell script"
+#       "available": "unknown",
+#       "note": "MCP availability must be verified within Claude Code"
 #     },
 #     "recommended": "rest_api"
 #   }
 #
+# Possible recommended values:
+#   "rest_api"        - REST credentials present and authentication verified
+#   "rest_fix_auth"   - REST credentials found but authentication failed; fix creds
+#   "rest_configure"  - No REST credentials set; configure JIRA_DOMAIN + JIRA_API_KEY
+#
 # Exit Codes:
-#   0 - At least one API method is available
-#   1 - No API methods available
+#   0 - REST API authenticated successfully
+#   1 - REST API not authenticated (credentials missing or auth failed)
 #
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Source the REST API functions if available
-if [[ -f "$SCRIPT_DIR/jira-rest-api.sh" ]]; then
-    source "$SCRIPT_DIR/jira-rest-api.sh"
-fi
 
 # Colors for output
 if [[ -t 2 ]]; then
@@ -166,14 +166,15 @@ determine_recommendation() {
         log_success "REST API is fully configured and authenticated"
         log_info "The plugin will use REST API as the primary method"
     elif [[ "$REST_AVAILABLE" == "true" ]]; then
-        RECOMMENDED="mcp"
+        RECOMMENDED="rest_fix_auth"
         log_warn "REST API credentials found but authentication failed"
-        log_info "Fix credentials to use REST API, or rely on MCP fallback"
+        log_info "Fix your JIRA_DOMAIN / JIRA_API_KEY credentials to restore REST access"
+        log_info "Format: JIRA_API_KEY=\"your-email@company.com:your-api-token\""
     else
-        RECOMMENDED="mcp"
+        RECOMMENDED="rest_configure"
         log_warn "REST API not configured"
-        log_info "Configure JIRA_DOMAIN and JIRA_API_KEY for full functionality"
-        log_info "MCP can be used as fallback if configured in Claude Code"
+        log_info "Set JIRA_DOMAIN and JIRA_API_KEY environment variables to enable REST"
+        log_info "Get an API token from: https://id.atlassian.com/manage-profile/security/api-tokens"
     fi
 }
 
@@ -189,26 +190,21 @@ generate_output() {
         rest_auth_json="null"
     fi
 
-    local rest_error_json
-    if [[ -n "$REST_ERROR" ]]; then
-        rest_error_json="\"$REST_ERROR\""
-    else
-        rest_error_json="null"
-    fi
-
+    # Pass REST_ERROR as a plain string arg; the jq filter converts empty
+    # string to null so callers get a proper JSON null, not an empty string.
     jq -n \
         --argjson rest_available "$REST_AVAILABLE" \
         --argjson rest_authenticated "$REST_AUTHENTICATED" \
         --argjson rest_user "$rest_auth_json" \
-        --argjson rest_error "$rest_error_json" \
-        --arg mcp_note "$MCP_NOTE" \
-        --arg recommended "$RECOMMENDED" \
+        --arg     rest_error "$REST_ERROR" \
+        --arg     mcp_note "$MCP_NOTE" \
+        --arg     recommended "$RECOMMENDED" \
         '{
             "rest_api": {
                 "available": $rest_available,
                 "authenticated": $rest_authenticated,
                 "user": $rest_user,
-                "error": $rest_error
+                "error": (if $rest_error == "" then null else $rest_error end)
             },
             "mcp": {
                 "available": "unknown",
@@ -220,8 +216,7 @@ generate_output() {
                     "JIRA_DOMAIN": "export JIRA_DOMAIN=\"company.atlassian.net\"",
                     "JIRA_API_KEY": "export JIRA_API_KEY=\"email@company.com:your-api-token\"",
                     "get_token": "https://id.atlassian.com/manage-profile/security/api-tokens"
-                },
-                "mcp": "Configure Atlassian MCP in Claude Code MCP settings"
+                }
             }
         }'
 }
