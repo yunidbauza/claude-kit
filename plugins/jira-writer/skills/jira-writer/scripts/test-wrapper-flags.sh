@@ -178,4 +178,29 @@ test_shallow_adf_doc_not_treated_as_full_adf() {
 test_envelope_shape_consistent_for_adf_errors
 test_shallow_adf_doc_not_treated_as_full_adf
 
+test_validate_adf_op_pass() {
+  local tmp=$(mktemp)
+  echo '{"type":"doc","version":1,"content":[]}' > "$tmp"
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" validate_adf "$tmp")
+  echo "$out" | jq -e '.api == "rest" and .data.ok == true' >/dev/null \
+    || fail "validate_adf valid doc: $out"
+  rm -f "$tmp"
+  pass "validate_adf valid doc"
+}
+
+test_validate_adf_op_fail() {
+  local tmp=$(mktemp)
+  echo '{"type":"doc","version":1,"content":[{"type":"taskList","attrs":{},"content":[]}]}' > "$tmp"
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" validate_adf "$tmp" 2>/dev/null || true)
+  echo "$out" | jq -e '.api == "error" and (.error // .message | test("localId"))' >/dev/null \
+    || fail "validate_adf invalid doc: $out"
+  rm -f "$tmp"
+  pass "validate_adf invalid doc"
+}
+
+test_validate_adf_op_pass
+test_validate_adf_op_fail
+
 echo "test-wrapper-flags.sh: all pass"

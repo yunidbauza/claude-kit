@@ -805,6 +805,35 @@ op_test_connection() {
     fi
 }
 
+# Validate ADF operation
+op_validate_adf() {
+    local input_path="$1"; shift || true
+    local bisect_flag=""
+    if [[ "${1:-}" == "--bisect" ]]; then bisect_flag="--bisect"; fi
+    if [[ -z "$input_path" || ! -r "$input_path" ]]; then
+        jq -n '{api:"error", operation:"validate_adf", error:"path required and must be readable"}'
+        return 1
+    fi
+    if ! command -v node >/dev/null 2>&1; then
+        jq -n '{api:"error", operation:"validate_adf", error:"Node 18+ required for validate_adf"}'
+        return 1
+    fi
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local result rc
+    result=$(node "$script_dir/adf-validate.mjs" "$input_path" $bisect_flag 2>&1) && rc=0 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        jq -n --argjson data "$result" '{api:"rest", data:$data}'
+        return 0
+    else
+        jq -n --argjson data "$result" '{api:"error", operation:"validate_adf",
+                                          error:($data.message // "validation failed"),
+                                          rule:($data.rule // null),
+                                          path:($data.path // null)}'
+        return 1
+    fi
+}
+
 # --- Main Entry Point ---
 
 print_usage() {
@@ -824,6 +853,7 @@ print_usage() {
     echo "  add_worklog KEY TIME_SPENT       - Add worklog entry" >&2
     echo "  upload_attachment KEY FILE [name] - Upload file attachment" >&2
     echo "  get_remote_links KEY             - Get remote issue links" >&2
+    echo "  validate_adf PATH_TO_ADF_JSON [--bisect] - Validate ADF locally (no Jira call)" >&2
     echo "  test_connection                  - Test API connection" >&2
     echo "" >&2
     echo "Output:" >&2
@@ -850,6 +880,7 @@ KNOWN_OPS=(
     add_worklog
     upload_attachment
     get_remote_links
+    validate_adf
     test_connection
 )
 
@@ -1103,6 +1134,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
         get_remote_links)
             [[ $# -lt 1 ]] && { echo "Error: get_remote_links requires issue key" >&2; exit 1; }
             op_get_remote_links "$@"
+            ;;
+        validate_adf)
+            [[ $# -lt 1 ]] && { echo "Error: validate_adf requires PATH_TO_ADF_JSON" >&2; exit 1; }
+            op_validate_adf "$@"
             ;;
         test_connection)
             op_test_connection
