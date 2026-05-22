@@ -106,3 +106,24 @@ test('valid taskList passes', async () => {
   assert.equal(r.code, 0);
   assert.equal(r.out.ok, true);
 });
+
+test('bisect returns lowest-index failing block', async () => {
+  const doc = {
+    type: 'doc', version: 1, content: [
+      { type: 'paragraph', content: [{ type: 'text', text: 'ok' }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'also ok' }] },
+      { type: 'taskList', attrs: {}, content: [] }, // missing localId at index 2
+      { type: 'paragraph', content: [{ type: 'text', text: 'never reached' }] },
+    ],
+  };
+  const r = await validate(doc, ['--bisect']);
+  assert.equal(r.code, 1);
+  assert.equal(r.out.block_index, 2);
+  assert.equal(r.out.rule, 'missing_localId');
+});
+
+test('bisect on valid doc returns ok', async () => {
+  const r = await validate({ type: 'doc', version: 1, content: [] }, ['--bisect']);
+  assert.equal(r.code, 0);
+  assert.equal(r.out.ok, true);
+});

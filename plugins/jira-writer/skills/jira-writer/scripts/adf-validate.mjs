@@ -64,13 +64,16 @@ export function validateAdf(doc) {
 }
 
 async function main() {
-  const [, , inputPath, ...flags] = process.argv;
+  const args = process.argv.slice(2);
+  const inputPath = args.find(a => !a.startsWith('--'));
+  const bisect = args.includes('--bisect'); // semantic alias today: same behavior
   if (!inputPath) {
     console.error('usage: adf-validate.mjs <input.json> [--bisect]');
     process.exit(2);
   }
   const doc = JSON.parse(await readFile(inputPath, 'utf8'));
   const result = validateAdf(doc);
+  if (bisect && !result.ok && result.block_index === undefined) result.block_index = null;
   process.stdout.write(JSON.stringify(result) + '\n');
   process.exit(result.ok ? 0 : 1);
 }
