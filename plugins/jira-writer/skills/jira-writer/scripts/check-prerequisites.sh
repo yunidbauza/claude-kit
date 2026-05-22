@@ -59,6 +59,19 @@ if command -v jq &> /dev/null; then
     jq_available=true
 fi
 
+# Check Node (optional — required only for --desc-file / --markdown / validate_adf)
+node_available=false
+node_version=""
+node_ok_for_md=false
+if command -v node >/dev/null 2>&1; then
+    node_available=true
+    node_version=$(node --version 2>/dev/null | sed 's/^v//')
+    major=$(echo "$node_version" | cut -d. -f1)
+    if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$major" -ge 18 ]]; then
+        node_ok_for_md=true
+    fi
+fi
+
 # Check JIRA_DOMAIN
 jira_domain_available=false
 jira_domain_value=""
@@ -160,6 +173,9 @@ jq -n \
     --arg     mmdc_path            "$mmdc_path" \
     --argjson curl_available       "$curl_available" \
     --argjson jq_available         "$jq_available" \
+    --argjson node_available       "$node_available" \
+    --arg     node_version         "$node_version" \
+    --argjson node_ok_for_md       "$node_ok_for_md" \
     --argjson jira_domain_available "$jira_domain_available" \
     --arg     jira_domain_value    "$jira_domain_value" \
     --argjson jira_api_key_available "$jira_api_key_available" \
@@ -188,6 +204,12 @@ jq -n \
         "jq": {
             "available": $jq_available,
             "install_cmd": "brew install jq"
+        },
+        "node": {
+            "available": $node_available,
+            "version": (if $node_version == "" then null else $node_version end),
+            "supports_rich_content": $node_ok_for_md,
+            "note": "Optional — required only for --desc-file/--markdown/validate_adf"
         },
         "jira_domain": {
             "available": $jira_domain_available,
