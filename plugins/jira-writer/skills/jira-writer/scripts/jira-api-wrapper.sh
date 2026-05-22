@@ -267,6 +267,28 @@ _resolve_content_input() {
     _to_adf_body "$desc"
 }
 
+# _usage_for_op OP — returns one-line usage signature for the given op.
+_usage_for_op() {
+    case "$1" in
+      create_issue) echo "create_issue PROJECT TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]" ;;
+      update_issue) echo "update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]" ;;
+      add_comment) echo "add_comment KEY BODY [--desc-file PATH] [--markdown]" ;;
+      get_issue) echo "get_issue KEY [FIELDS] [--summary-only]" ;;
+      validate_adf) echo "validate_adf PATH_TO_ADF_JSON [--bisect]" ;;
+      get_transitions) echo "get_transitions KEY" ;;
+      transition_issue) echo "transition_issue KEY TRANSITION_ID" ;;
+      search_jql) echo "search_jql JQL [max_results]" ;;
+      get_projects) echo "get_projects [max_results]" ;;
+      get_issue_types) echo "get_issue_types PROJECT" ;;
+      lookup_user) echo "lookup_user QUERY" ;;
+      add_worklog) echo "add_worklog KEY TIME_SPENT" ;;
+      upload_attachment) echo "upload_attachment KEY FILE [name]" ;;
+      get_remote_links) echo "get_remote_links KEY" ;;
+      test_connection) echo "test_connection" ;;
+      *) echo "$1 [args...]" ;;
+    esac
+}
+
 # _validate_adf_or_error ADF_JSON OP_NAME
 # Runs adf-validate.mjs on the input. On failure, emits api:"error" envelope
 # to stdout (and returns 1) so callers can short-circuit before HTTP.
@@ -1056,14 +1078,25 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
 
     case "$operation" in
         get_issue)
-            [[ $# -lt 1 ]] && { echo "Error: get_issue requires issue key" >&2; exit 1; }
-            op_get_issue "$@"
+            _parse_flags "summary-only" -- "$@"
+            set -- "${_POSITIONAL[@]:-}"
+            if [[ $# -lt 1 ]]; then
+                echo "Error: missing required arguments for get_issue" >&2
+                echo "Usage: $(_usage_for_op get_issue)" >&2
+                exit 1
+            fi
+            if _has_bool summary-only; then
+                op_get_issue "$1" "summary,issuetype,parent,status,assignee"
+            else
+                op_get_issue "$@"
+            fi
             ;;
         create_issue)
             _parse_flags "desc-file,markdown,parent" -- "$@"
             set -- "${_POSITIONAL[@]:-}"
             if [[ $# -lt 3 ]]; then
-                echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2
+                echo "Error: missing required arguments for create_issue" >&2
+                echo "Usage: $(_usage_for_op create_issue)" >&2
                 exit 1
             fi
             op_create_issue "$@"
@@ -1075,7 +1108,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             _has_bool markdown && _md="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
                 if [[ $# -lt 1 ]]; then
-                    echo "Error: update_issue requires KEY" >&2
+                    echo "Error: missing required arguments for update_issue" >&2
+                    echo "Usage: $(_usage_for_op update_issue)" >&2
                     exit 1
                 fi
                 _key="$1"
@@ -1087,7 +1121,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                 op_update_issue "$_key" "$_fields" "1"
             else
                 if [[ $# -lt 2 ]]; then
-                    echo "Error: update_issue requires KEY FIELDS_JSON" >&2
+                    echo "Error: missing required arguments for update_issue" >&2
+                    echo "Usage: $(_usage_for_op update_issue)" >&2
                     exit 1
                 fi
                 _is_adf="0"
@@ -1105,7 +1140,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             _has_bool markdown && _md="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
                 if [[ $# -lt 1 ]]; then
-                    echo "Error: add_comment requires KEY" >&2
+                    echo "Error: missing required arguments for add_comment" >&2
+                    echo "Usage: $(_usage_for_op add_comment)" >&2
                     exit 1
                 fi
                 _key="$1"
@@ -1116,7 +1152,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                 op_add_comment "$_key" "$_adf" "1"
             else
                 if [[ $# -lt 2 ]]; then
-                    echo "Error: add_comment requires KEY BODY" >&2
+                    echo "Error: missing required arguments for add_comment" >&2
+                    echo "Usage: $(_usage_for_op add_comment)" >&2
                     exit 1
                 fi
                 _is_adf_comment="0"
@@ -1125,42 +1162,42 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             fi
             ;;
         get_transitions)
-            [[ $# -lt 1 ]] && { echo "Error: get_transitions requires issue key" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for get_transitions" >&2; echo "Usage: $(_usage_for_op get_transitions)" >&2; exit 1; }
             op_get_transitions "$@"
             ;;
         transition_issue)
-            [[ $# -lt 2 ]] && { echo "Error: transition_issue requires KEY TRANSITION_ID" >&2; exit 1; }
+            [[ $# -lt 2 ]] && { echo "Error: missing required arguments for transition_issue" >&2; echo "Usage: $(_usage_for_op transition_issue)" >&2; exit 1; }
             op_transition_issue "$@"
             ;;
         search_jql)
-            [[ $# -lt 1 ]] && { echo "Error: search_jql requires JQL query" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for search_jql" >&2; echo "Usage: $(_usage_for_op search_jql)" >&2; exit 1; }
             op_search_jql "$@"
             ;;
         get_projects)
             op_get_projects "$@"
             ;;
         get_issue_types)
-            [[ $# -lt 1 ]] && { echo "Error: get_issue_types requires project key" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for get_issue_types" >&2; echo "Usage: $(_usage_for_op get_issue_types)" >&2; exit 1; }
             op_get_issue_types "$@"
             ;;
         lookup_user)
-            [[ $# -lt 1 ]] && { echo "Error: lookup_user requires query" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for lookup_user" >&2; echo "Usage: $(_usage_for_op lookup_user)" >&2; exit 1; }
             op_lookup_user "$@"
             ;;
         add_worklog)
-            [[ $# -lt 2 ]] && { echo "Error: add_worklog requires KEY TIME_SPENT" >&2; exit 1; }
+            [[ $# -lt 2 ]] && { echo "Error: missing required arguments for add_worklog" >&2; echo "Usage: $(_usage_for_op add_worklog)" >&2; exit 1; }
             op_add_worklog "$@"
             ;;
         upload_attachment)
-            [[ $# -lt 2 ]] && { echo "Error: upload_attachment requires KEY FILE" >&2; exit 1; }
+            [[ $# -lt 2 ]] && { echo "Error: missing required arguments for upload_attachment" >&2; echo "Usage: $(_usage_for_op upload_attachment)" >&2; exit 1; }
             op_upload_attachment "$@"
             ;;
         get_remote_links)
-            [[ $# -lt 1 ]] && { echo "Error: get_remote_links requires issue key" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for get_remote_links" >&2; echo "Usage: $(_usage_for_op get_remote_links)" >&2; exit 1; }
             op_get_remote_links "$@"
             ;;
         validate_adf)
-            [[ $# -lt 1 ]] && { echo "Error: validate_adf requires PATH_TO_ADF_JSON" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for validate_adf" >&2; echo "Usage: $(_usage_for_op validate_adf)" >&2; exit 1; }
             op_validate_adf "$@"
             ;;
         test_connection)

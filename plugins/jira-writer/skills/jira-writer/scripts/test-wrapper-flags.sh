@@ -222,4 +222,40 @@ test_parent_passes_well_formed() {
 test_parent_validates_format
 test_parent_passes_well_formed
 
+test_summary_only_passes_fields() {
+  MOCK_DIR=$(mktemp -d)
+  cat > "$MOCK_DIR/curl" <<'BASH'
+#!/usr/bin/env bash
+echo "$@" > "$MOCK_LOG"
+echo '{"key":"INCORP-1","fields":{"summary":"x","issuetype":{"name":"Bug"},"status":{"name":"Open"}}}'
+echo "200"
+BASH
+  chmod +x "$MOCK_DIR/curl"
+  export MOCK_LOG="$MOCK_DIR/log"
+  export PATH="$MOCK_DIR:$PATH"
+  export JIRA_DOMAIN="example.atlassian.net"
+  export JIRA_API_KEY="u@e.com:x"
+
+  bash "$SCRIPT_DIR/jira-api-wrapper.sh" get_issue INCORP-1 --summary-only >/dev/null
+  grep -q "fields=summary,issuetype,parent,status,assignee" "$MOCK_LOG" \
+    || fail "--summary-only should narrow ?fields= param. log: $(cat $MOCK_LOG)"
+
+  PATH=$(echo "$PATH" | sed -e "s|$MOCK_DIR:||")
+  rm -rf "$MOCK_DIR"
+  pass "--summary-only narrows fields"
+}
+
+test_missing_arg_help_lists_signature() {
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" create_issue 2>&1 || true)
+  echo "$out" | grep -q "PROJECT.*TYPE.*SUMMARY" \
+    || fail "missing-arg help should show full signature: $out"
+  echo "$out" | grep -q -- "--parent" \
+    || fail "missing-arg help should mention --parent flag: $out"
+  pass "missing-arg help shows full signature"
+}
+
+test_summary_only_passes_fields
+test_missing_arg_help_lists_signature
+
 echo "test-wrapper-flags.sh: all pass"
