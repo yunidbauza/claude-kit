@@ -203,4 +203,23 @@ test_validate_adf_op_fail() {
 test_validate_adf_op_pass
 test_validate_adf_op_fail
 
+test_parent_validates_format() {
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" create_issue INCORP Story "x" --parent badformat 2>/dev/null || true)
+  echo "$out" | jq -e '.api == "error" and (.error | test("parent"))' >/dev/null \
+    || fail "bad --parent should hard-error: $out"
+  pass "bad --parent hard-errored"
+}
+
+test_parent_passes_well_formed() {
+  local out
+  out=$(JIRA_WRITER_DRY_RUN=1 bash "$SCRIPT_DIR/jira-api-wrapper.sh" create_issue INCORP Story "x" --parent INCORP-9 2>/dev/null)
+  echo "$out" | jq -e '.fields.parent.key == "INCORP-9"' >/dev/null \
+    || fail "well-formed --parent should set fields.parent.key: $out"
+  pass "well-formed --parent applied"
+}
+
+test_parent_validates_format
+test_parent_passes_well_formed
+
 echo "test-wrapper-flags.sh: all pass"

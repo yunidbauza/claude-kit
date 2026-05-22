@@ -348,16 +348,40 @@ op_create_issue() {
         _validate_adf_or_error "$desc_adf" "create_issue" || return 1
     fi
 
+    local parent_key="$(_flag_value parent)"
+    if [[ -n "$parent_key" ]]; then
+        if ! [[ "$parent_key" =~ ^[A-Z][A-Z0-9_]+-[0-9]+$ ]]; then
+            jq -n --arg op "create_issue" --arg p "$parent_key" \
+              '{api:"error", operation:$op, error:("--parent must match ^[A-Z][A-Z0-9_]+-[0-9]+$ — got: " + $p)}'
+            return 1
+        fi
+    fi
+
     local issue_data
-    if [[ -n "$desc_adf" ]]; then
+    if [[ -n "$desc_adf" && -n "$parent_key" ]]; then
+        issue_data=$(jq -n \
+            --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" \
+            --argjson desc "$desc_adf" --arg parent "$parent_key" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary, description:$desc, parent:{key:$parent}}}')
+    elif [[ -n "$desc_adf" ]]; then
         issue_data=$(jq -n \
             --arg project "$project_key" --arg type "$issue_type" \
             --arg summary "$summary" --argjson desc "$desc_adf" \
             '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary, description:$desc}}')
+    elif [[ -n "$parent_key" ]]; then
+        issue_data=$(jq -n \
+            --arg project "$project_key" --arg type "$issue_type" \
+            --arg summary "$summary" --arg parent "$parent_key" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary, parent:{key:$parent}}}')
     else
         issue_data=$(jq -n \
             --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" \
             '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary}}')
+    fi
+
+    if [[ "${JIRA_WRITER_DRY_RUN:-}" == "1" ]]; then
+        echo "$issue_data"
+        return 0
     fi
 
     # Check REST availability
