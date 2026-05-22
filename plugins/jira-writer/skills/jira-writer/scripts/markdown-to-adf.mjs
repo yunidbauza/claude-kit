@@ -94,6 +94,25 @@ function tokenToAdf(token) {
       return { type: 'blockquote', content: (token.tokens || []).map(tokenToAdf).filter(Boolean) };
     case 'hr':
       return { type: 'rule' };
+    case 'table': {
+      const headerRow = {
+        type: 'tableRow',
+        content: token.header.map(cell => ({
+          type: 'tableHeader',
+          attrs: {},
+          content: [{ type: 'paragraph', content: inlineTokens(cell.tokens) }],
+        })),
+      };
+      const bodyRows = token.rows.map(row => ({
+        type: 'tableRow',
+        content: row.map(cell => ({
+          type: 'tableCell',
+          attrs: {},
+          content: [{ type: 'paragraph', content: inlineTokens(cell.tokens) }],
+        })),
+      }));
+      return { type: 'table', content: [headerRow, ...bodyRows] };
+    }
     case 'space':
       return null;
     default:

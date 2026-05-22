@@ -152,3 +152,19 @@ test('hard break in paragraph becomes hardBreak node', async () => {
   const types = adf.content[0].content.map(n => n.type);
   assert.ok(types.includes('hardBreak'), `types: ${types}`);
 });
+
+test('table becomes table > tableRow > tableHeader/tableCell', async () => {
+  const md = '| H1 | H2 |\n| -- | -- |\n| a  | b  |\n| c  | d  |';
+  const adf = await convert(md);
+  const table = adf.content[0];
+  assert.equal(table.type, 'table');
+  assert.equal(table.content.length, 3, 'one header row + two body rows');
+  const headerRow = table.content[0];
+  assert.equal(headerRow.type, 'tableRow');
+  assert.equal(headerRow.content[0].type, 'tableHeader');
+  assert.deepEqual(headerRow.content[0].attrs, {});
+  assert.equal(headerRow.content[0].content[0].content[0].text, 'H1');
+  const firstBody = table.content[1];
+  assert.equal(firstBody.content[0].type, 'tableCell');
+  assert.deepEqual(firstBody.content[0].attrs, {});
+});
