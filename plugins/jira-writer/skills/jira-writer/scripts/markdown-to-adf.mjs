@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { marked } from './vendor/marked/marked.esm.js';
+import { marked } from './vendor/marked/marked.esm.mjs';
 
 const HTML_ENTITIES = { '&lt;': '<', '&gt;': '>', '&amp;': '&', '&quot;': '"', '&#39;': "'" };
 function unescapeHtml(s) {
