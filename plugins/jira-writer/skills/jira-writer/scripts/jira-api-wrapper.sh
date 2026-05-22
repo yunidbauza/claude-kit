@@ -213,6 +213,60 @@ _has_bool() {
     return 1
 }
 
+# _resolve_content_input POSITIONAL_DESC DESC_FILE MARKDOWN_BOOL
+# Echoes ADF JSON on stdout. Echoes informational messages to stderr.
+# Priority (first match wins):
+#   1. DESC_FILE non-empty       → read file, MD → ADF
+#   2. MARKDOWN_BOOL == "1"      → POSITIONAL_DESC treated as MD, MD → ADF
+#   3. POSITIONAL_DESC is ADF doc → passthrough
+#   4. POSITIONAL_DESC otherwise → plain text paragraph wrap
+# Empty POSITIONAL_DESC + no DESC_FILE + no MARKDOWN returns empty (caller decides).
+_resolve_content_input() {
+    local desc="${1:-}"
+    local desc_file="${2:-}"
+    local md_flag="${3:-}"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    if [[ -n "$desc_file" && -n "$desc" ]]; then
+        log_warn "--desc-file supplied; positional description ignored"
+    fi
+
+    if [[ -n "$desc_file" ]]; then
+        if [[ ! -r "$desc_file" ]]; then
+            log_error "--desc-file path not readable: $desc_file"
+            return 1
+        fi
+        if ! command -v node >/dev/null 2>&1; then
+            log_error "Node 18+ required for --desc-file but 'node' not found in PATH"
+            return 1
+        fi
+        node "$script_dir/markdown-to-adf.mjs" "$desc_file" || return 1
+        return 0
+    fi
+
+    if [[ "$md_flag" == "1" ]]; then
+        if [[ -z "$desc" ]]; then
+            log_error "--markdown supplied without a description argument"
+            return 1
+        fi
+        if ! command -v node >/dev/null 2>&1; then
+            log_error "Node 18+ required for --markdown but 'node' not found in PATH"
+            return 1
+        fi
+        local tmp
+        tmp="$(mktemp)" || return 1
+        printf '%s' "$desc" > "$tmp"
+        node "$script_dir/markdown-to-adf.mjs" "$tmp"
+        local rc=$?
+        rm -f "$tmp"
+        return $rc
+    fi
+
+    # Pass-through for ADF; wrap as paragraph otherwise (existing behavior).
+    _to_adf_body "$desc"
+}
+
 # --- Operation Handlers ---
 
 # Get issue operation
@@ -244,38 +298,27 @@ op_create_issue() {
     local summary="$3"
     local description="${4:-}"
 
-    # Build the issue data
-    # Note: Jira API v3 requires description in ADF format. _to_adf_body
-    # passes through pre-built ADF docs unchanged, or wraps plain text.
+    local desc_file="$(_flag_value desc-file)"
+    local markdown_bool="0"; _has_bool markdown && markdown_bool="1"
+
+    local desc_adf=""
+    if [[ -n "$description" || -n "$desc_file" || "$markdown_bool" == "1" ]]; then
+        desc_adf=$(_resolve_content_input "$description" "$desc_file" "$markdown_bool") || {
+            jq -n --arg op "create_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+            return 1
+        }
+    fi
+
     local issue_data
-    if [[ -n "$description" ]]; then
-        local desc_adf
-        desc_adf=$(_to_adf_body "$description")
+    if [[ -n "$desc_adf" ]]; then
         issue_data=$(jq -n \
-            --arg project "$project_key" \
-            --arg type "$issue_type" \
-            --arg summary "$summary" \
-            --argjson desc "$desc_adf" \
-            '{
-                "fields": {
-                    "project": {"key": $project},
-                    "issuetype": {"name": $type},
-                    "summary": $summary,
-                    "description": $desc
-                }
-            }')
+            --arg project "$project_key" --arg type "$issue_type" \
+            --arg summary "$summary" --argjson desc "$desc_adf" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary, description:$desc}}')
     else
         issue_data=$(jq -n \
-            --arg project "$project_key" \
-            --arg type "$issue_type" \
-            --arg summary "$summary" \
-            '{
-                "fields": {
-                    "project": {"key": $project},
-                    "issuetype": {"name": $type},
-                    "summary": $summary
-                }
-            }')
+            --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary}}')
     fi
 
     # Check REST availability
@@ -886,7 +929,12 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             op_get_issue "$@"
             ;;
         create_issue)
-            [[ $# -lt 3 ]] && { echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2; exit 1; }
+            _parse_flags "desc-file,markdown,parent" -- "$@"
+            set -- "${_POSITIONAL[@]:-}"
+            if [[ $# -lt 3 ]]; then
+                echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2
+                exit 1
+            fi
             op_create_issue "$@"
             ;;
         update_issue)

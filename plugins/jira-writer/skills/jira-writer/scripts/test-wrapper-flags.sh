@@ -34,7 +34,47 @@ test_unknown_flag_is_positional() {
   pass "unknown flag treated as positional"
 }
 
+test_resolve_plain_text() {
+  local out
+  out=$(_resolve_content_input "hello world" "" "")
+  echo "$out" | jq -e '.type == "doc" and .content[0].content[0].text == "hello world"' >/dev/null \
+    || fail "plain text → paragraph wrap: $out"
+  pass "resolve plain text"
+}
+
+test_resolve_adf_passthrough() {
+  local adf='{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"hi"}]}]}'
+  local out
+  out=$(_resolve_content_input "$adf" "" "")
+  echo "$out" | jq -e '.content[0].content[0].text == "hi"' >/dev/null \
+    || fail "ADF passthrough: $out"
+  pass "resolve ADF passthrough"
+}
+
+test_resolve_desc_file() {
+  local tmp=$(mktemp --suffix=.md 2>/dev/null || mktemp -t mdXXXX).md
+  printf '# heading\n\nparagraph\n' > "$tmp"
+  local out
+  out=$(_resolve_content_input "" "$tmp" "")
+  echo "$out" | jq -e '.content[0].type == "heading" and .content[1].type == "paragraph"' >/dev/null \
+    || fail "desc-file: $out"
+  rm -f "$tmp"
+  pass "resolve --desc-file"
+}
+
+test_resolve_markdown_flag() {
+  local out
+  out=$(_resolve_content_input "# heading" "" "1")
+  echo "$out" | jq -e '.content[0].type == "heading"' >/dev/null \
+    || fail "markdown flag: $out"
+  pass "resolve --markdown"
+}
+
 test_basic
 test_bool_flag
 test_unknown_flag_is_positional
+test_resolve_plain_text
+test_resolve_adf_passthrough
+test_resolve_desc_file
+test_resolve_markdown_flag
 echo "test-wrapper-flags.sh: all pass"
