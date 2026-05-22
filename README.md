@@ -70,12 +70,14 @@ npm install -g @mermaid-js/mermaid-cli
 
 ## Features
 
-- **Ticket Management** - Create and update Jira issues
+- **Ticket Management** - Create, update, comment, transition, and search Jira issues
 - **Rich Formatting** - Headings, bold, italic, links, code blocks, tables
-- **Interactive Checkboxes** - `- [ ]` and `- [x]` as clickable task lists
+- **Interactive Checkboxes** - `- [ ]` and `- [x]` as clickable task lists with auto-generated `localId` UUIDs
 - **Mermaid Diagrams** - Auto-convert and embed as images
-- **Markdown Import** - Use .md files as ticket content
-- **Automatic Fallback** - Uses MCP if REST API is unavailable
+- **Markdown -> ADF Conversion** - Pass `--desc-file PATH` or `--markdown` and the wrapper converts (vendored `marked` v13, no npm install)
+- **Pre-flight ADF Validation** - Catches mark exclusivity, missing `localId`, malformed `tableCell` attrs, and other `INVALID_INPUT` causes client-side before they hit Jira
+- **Epic Parenting** - `--parent KEY` on `create_issue` with format validation
+- **Smart Failure Routing** - Plain-text REST failures fall back to MCP; ADF/markdown failures hard-error (MCP can't retry rich content)
 
 ### Supported Diagram Types (11)
 
@@ -105,53 +107,61 @@ The skill activates contextually when you:
 "Create a ticket with acceptance criteria:
  - [ ] User can login
  - [x] Remember me works"
+"Create a story from /tmp/oauth-spec.md and attach it to epic PROJ-100"
+"Validate this ADF file before I send it"
 ```
 
 ## How It Works
 
-The plugin uses **REST API as the primary method** with MCP as a fallback:
+The plugin uses **REST API as the primary method**. MCP is a fallback only for plain-text inputs (the only path MCP can actually retry without losing fidelity).
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                     Jira Writer Skill                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │               jira-api-wrapper.sh                    │   │
-│   │  (Unified interface - tries REST first, MCP fallback)│   │
-│   └─────────────────────────────────────────────────────┘   │
-│                            │                                │
-│              ┌─────────────┴─────────────┐                  │
-│              ▼                           ▼                  │
-│   ┌──────────────────┐       ┌──────────────────┐          │
-│   │   REST API        │       │   MCP Fallback   │          │
-│   │   (Primary)       │       │   (Secondary)    │          │
-│   │                   │       │                   │          │
-│   │ jira-rest-api.sh  │       │ Atlassian MCP    │          │
-│   └──────────────────┘       └──────────────────┘          │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          Jira Writer Skill                                │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│   ┌──────────────────────────────────────────────────────────────────┐   │
+│   │                      jira-api-wrapper.sh                          │   │
+│   │   resolves input mode -> validates ADF -> dispatches REST call    │   │
+│   └──────────────────────────────────────────────────────────────────┘   │
+│         │                       │                          │             │
+│         ▼                       ▼                          ▼             │
+│   ┌───────────┐         ┌────────────────┐        ┌────────────────┐    │
+│   │  REST     │         │ markdown-to-   │        │ adf-validate   │    │
+│   │  (always  │         │ adf.mjs        │        │ .mjs           │    │
+│   │  primary) │         │ (Node 18+)     │        │ (Node 18+)     │    │
+│   └───────────┘         └────────────────┘        └────────────────┘    │
+│         │                                                                │
+│         ▼ on 4xx                                                         │
+│   plain text -> api:"mcp_fallback" (MCP can retry)                       │
+│   ADF/markdown -> api:"error" (MCP cannot retry rich content)            │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### API Selection by Content Type
+### Input Modes & Failure Routing
 
-| Content              | API Used        | Fallback |
-| -------------------- | --------------- | -------- |
-| Text, lists, code    | REST (primary)  | MCP      |
-| Checkboxes (`- [ ]`) | REST only       | None     |
-| Mermaid diagrams     | REST only       | None     |
-| Attachments          | REST only       | None     |
+| Input mode                                  | REST 4xx envelope    | Notes                                                  |
+| ------------------------------------------- | -------------------- | ------------------------------------------------------ |
+| Plain text (positional `DESC`)              | `api:"mcp_fallback"` | MCP retry is viable; unchanged from v1.4              |
+| Markdown via `--desc-file PATH`             | `api:"error"`        | Converted to ADF, then validated client-side          |
+| Markdown via `--markdown`                   | `api:"error"`        | Same as above, with inline string                     |
+| Pre-built ADF (raw JSON in positional arg)  | `api:"error"`        | Passthrough + pre-flight validation                   |
+| Mermaid diagrams / attachments              | `api:"error"`        | Always REST-only; no MCP fallback                     |
 
 ## Scripts
 
 | Script | Purpose |
 | ------ | ------- |
 | `test-jira-connection.sh` | Test API connectivity and auth |
-| `check-prerequisites.sh` | Verify all dependencies |
-| `jira-api-wrapper.sh` | Unified interface (REST + MCP fallback) |
+| `check-prerequisites.sh` | Verify all dependencies (incl. Node 18+) |
+| `jira-api-wrapper.sh` | Unified interface (flag parsing, ADF routing, failure envelopes) |
 | `jira-rest-api.sh` | Core REST API functions |
+| `markdown-to-adf.mjs` | Node helper: markdown -> ADF (uses vendored `marked` v13) |
+| `adf-validate.mjs` | Node helper: lightweight ADF rule checks + `--bisect` mode |
 | `jira-mermaid-upload.sh` | Upload single diagram |
 | `jira-mermaid-batch-upload.sh` | Upload multiple diagrams |
+| `vendor/marked/` | Vendored `marked@13.0.3` ESM bundle (no npm install needed) |
 
 ### Script Usage Examples
 
@@ -159,14 +169,34 @@ The plugin uses **REST API as the primary method** with MCP as a fallback:
 # Test your connection
 ./scripts/test-jira-connection.sh
 
-# Check prerequisites
+# Check prerequisites (also reports Node availability)
 ./scripts/check-prerequisites.sh
 
-# Get an issue via wrapper (REST first, MCP fallback)
+# Get an issue
 ./scripts/jira-api-wrapper.sh get_issue PROJ-123
 
-# Create an issue
+# Quick lookup — narrowed fields only
+./scripts/jira-api-wrapper.sh get_issue PROJ-123 --summary-only
+
+# Create an issue with a plain-text description (MCP fallback available on REST failure)
 ./scripts/jira-api-wrapper.sh create_issue PROJECT "Task" "Summary" "Description"
+
+# Create a rich-content issue from a markdown file, attached to an epic
+./scripts/jira-api-wrapper.sh create_issue PROJECT "Story" "OAuth support" \
+  --desc-file /tmp/oauth-spec.md \
+  --parent PROJECT-172
+
+# Inline markdown comment with a checkbox
+./scripts/jira-api-wrapper.sh add_comment PROJ-123 \
+  "## Update
+
+- [x] Code review complete" --markdown
+
+# Locally validate ADF before sending (catches mark exclusivity, missing localId, etc.)
+./scripts/jira-api-wrapper.sh validate_adf /tmp/built-adf.json
+
+# Bisect to find the first failing block in a large ADF doc
+./scripts/jira-api-wrapper.sh validate_adf /tmp/built-adf.json --bisect
 
 # Direct REST API call
 ./scripts/jira-rest-api.sh jira_get_issue PROJ-123
@@ -174,6 +204,8 @@ The plugin uses **REST API as the primary method** with MCP as a fallback:
 # Upload a diagram
 ./scripts/jira-mermaid-upload.sh PROJ-123 diagram.mmd
 ```
+
+See [plugins/jira-writer/CHANGELOG.md](plugins/jira-writer/CHANGELOG.md) for v1.5.0 release notes.
 
 ## Troubleshooting
 
