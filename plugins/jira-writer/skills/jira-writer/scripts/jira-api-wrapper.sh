@@ -938,12 +938,54 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             op_create_issue "$@"
             ;;
         update_issue)
-            [[ $# -lt 2 ]] && { echo "Error: update_issue requires KEY FIELDS_JSON" >&2; exit 1; }
-            op_update_issue "$@"
+            _parse_flags "desc-file,markdown" -- "$@"
+            set -- "${_POSITIONAL[@]:-}"
+            local _df="$(_flag_value desc-file)" _md="0"
+            _has_bool markdown && _md="1"
+            if [[ -n "$_df" || "$_md" == "1" ]]; then
+                if [[ $# -lt 1 ]]; then
+                    echo "Error: update_issue requires KEY" >&2
+                    exit 1
+                fi
+                local _adf _key="$1"
+                _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
+                    jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+                    exit 1
+                }
+                local _fields
+                _fields=$(jq -n --argjson desc "$_adf" '{description: $desc}')
+                op_update_issue "$_key" "$_fields"
+            else
+                if [[ $# -lt 2 ]]; then
+                    echo "Error: update_issue requires KEY FIELDS_JSON" >&2
+                    exit 1
+                fi
+                op_update_issue "$@"
+            fi
             ;;
         add_comment)
-            [[ $# -lt 2 ]] && { echo "Error: add_comment requires KEY BODY" >&2; exit 1; }
-            op_add_comment "$@"
+            _parse_flags "desc-file,markdown" -- "$@"
+            set -- "${_POSITIONAL[@]:-}"
+            local _df="$(_flag_value desc-file)" _md="0"
+            _has_bool markdown && _md="1"
+            if [[ -n "$_df" || "$_md" == "1" ]]; then
+                if [[ $# -lt 1 ]]; then
+                    echo "Error: add_comment requires KEY" >&2
+                    exit 1
+                fi
+                local _adf _key="$1"
+                _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
+                    jq -n --arg op "add_comment" '{api:"error", operation:$op, error:"failed to resolve comment body"}'
+                    exit 1
+                }
+                op_add_comment "$_key" "$_adf"
+            else
+                if [[ $# -lt 2 ]]; then
+                    echo "Error: add_comment requires KEY BODY" >&2
+                    exit 1
+                fi
+                op_add_comment "$@"
+            fi
             ;;
         get_transitions)
             [[ $# -lt 1 ]] && { echo "Error: get_transitions requires issue key" >&2; exit 1; }

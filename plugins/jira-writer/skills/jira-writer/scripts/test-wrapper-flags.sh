@@ -77,4 +77,18 @@ test_resolve_plain_text
 test_resolve_adf_passthrough
 test_resolve_desc_file
 test_resolve_markdown_flag
+
+test_add_comment_desc_file() {
+  local tmp
+  tmp=$(mktemp --suffix=.md 2>/dev/null || mktemp -t mdXXXX).md
+  printf '## comment heading\n\nbody\n' > "$tmp"
+  local out
+  out=$(_resolve_content_input "" "$tmp" "")
+  echo "$out" | jq -e '.content[0].type == "heading"' >/dev/null \
+    || fail "add_comment desc-file resolve: $out"
+  rm -f "$tmp"
+  pass "add_comment shares resolver"
+}
+test_add_comment_desc_file
+
 echo "test-wrapper-flags.sh: all pass"
