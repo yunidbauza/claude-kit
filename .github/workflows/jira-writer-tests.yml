@@ -1,0 +1,38 @@
+name: jira-writer tests
+
+on:
+  push:
+    paths:
+      - 'plugins/jira-writer/**'
+      - '.github/workflows/jira-writer-tests.yml'
+  pull_request:
+    paths:
+      - 'plugins/jira-writer/**'
+      - '.github/workflows/jira-writer-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['18', '20']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Run node tests
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: node --test test-markdown-to-adf.mjs test-adf-validate.mjs
+      - name: Run wrapper tests
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: bash test-wrapper-flags.sh
+      - name: Run existing wrapper-dispatch tests
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: bash test-wrapper-dispatch.sh
+      - name: Run check-prerequisites
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: bash check-prerequisites.sh | jq -e '.node.available == true' >/dev/null

@@ -152,6 +152,172 @@ _input_was_adf() {
     printf '%s' "$input" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1
 }
 
+# _parse_flags KNOWN_CSV -- "$@"
+# Splits "$@" into:
+#   _POSITIONAL=(...)   positional args
+#   _FLAGS=(name=val ...) single-value flags
+#   _BOOLS=(name ...)     boolean (value-less) flags
+# KNOWN_CSV is a comma-separated list of long flag names. Single-value vs
+# boolean is determined by lookahead: if the next token starts with -- or is
+# absent, treat as boolean. Unknown flags pass through as positional args.
+_parse_flags() {
+    local known_csv="$1"; shift
+    [[ "${1:-}" == "--" ]] && shift
+    _POSITIONAL=()
+    _FLAGS=()
+    _BOOLS=()
+    local known=",$known_csv,"
+    while [[ $# -gt 0 ]]; do
+        local arg="$1"
+        if [[ "$arg" == --* ]]; then
+            local name="${arg#--}"
+            if [[ "$known" == *",$name,"* ]]; then
+                # Bool flags: markdown, bisect, summary-only
+                if [[ "$name" == "markdown" || "$name" == "bisect" || "$name" == "summary-only" ]]; then
+                    _BOOLS+=("$name")
+                    shift
+                else
+                    if [[ $# -lt 2 ]]; then
+                        echo "Error: flag --$name requires a value" >&2
+                        return 2
+                    fi
+                    _FLAGS+=("$name=$2")
+                    shift 2
+                fi
+            else
+                _POSITIONAL+=("$arg")
+                shift
+            fi
+        else
+            _POSITIONAL+=("$arg")
+            shift
+        fi
+    done
+}
+
+# _flag_value NAME — echoes the value of the named single-value flag, or "" if absent.
+_flag_value() {
+    local name="$1" entry
+    for entry in "${_FLAGS[@]:-}"; do
+        [[ "$entry" == "$name="* ]] && { echo "${entry#*=}"; return 0; }
+    done
+    return 0
+}
+
+# _has_bool NAME — returns 0 if the named bool flag is present.
+_has_bool() {
+    local name="$1" entry
+    for entry in "${_BOOLS[@]:-}"; do
+        [[ "$entry" == "$name" ]] && return 0
+    done
+    return 1
+}
+
+# _resolve_content_input POSITIONAL_DESC DESC_FILE MARKDOWN_BOOL
+# Echoes ADF JSON on stdout. Echoes informational messages to stderr.
+# Priority (first match wins):
+#   1. DESC_FILE non-empty       → read file, MD → ADF
+#   2. MARKDOWN_BOOL == "1"      → POSITIONAL_DESC treated as MD, MD → ADF
+#   3. POSITIONAL_DESC is ADF doc → passthrough
+#   4. POSITIONAL_DESC otherwise → plain text paragraph wrap
+# Empty POSITIONAL_DESC + no DESC_FILE + no MARKDOWN returns empty (caller decides).
+_resolve_content_input() {
+    local desc="${1:-}"
+    local desc_file="${2:-}"
+    local md_flag="${3:-}"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    if [[ -n "$desc_file" && -n "$desc" ]]; then
+        log_warn "--desc-file supplied; positional description ignored"
+    fi
+
+    if [[ -n "$desc_file" ]]; then
+        if [[ ! -r "$desc_file" ]]; then
+            log_error "--desc-file path not readable: $desc_file"
+            return 1
+        fi
+        if ! command -v node >/dev/null 2>&1; then
+            log_error "Node 18+ required for --desc-file but 'node' not found in PATH"
+            return 1
+        fi
+        node "$script_dir/markdown-to-adf.mjs" "$desc_file" || return 1
+        return 0
+    fi
+
+    if [[ "$md_flag" == "1" ]]; then
+        if [[ -z "$desc" ]]; then
+            log_error "--markdown supplied without a description argument"
+            return 1
+        fi
+        if ! command -v node >/dev/null 2>&1; then
+            log_error "Node 18+ required for --markdown but 'node' not found in PATH"
+            return 1
+        fi
+        local tmp
+        tmp="$(mktemp)" || return 1
+        printf '%s' "$desc" > "$tmp"
+        node "$script_dir/markdown-to-adf.mjs" "$tmp"
+        local rc=$?
+        rm -f "$tmp"
+        return $rc
+    fi
+
+    # Pass-through for ADF; wrap as paragraph otherwise (existing behavior).
+    _to_adf_body "$desc"
+}
+
+# _usage_for_op OP — returns one-line usage signature for the given op.
+_usage_for_op() {
+    case "$1" in
+      create_issue) echo "create_issue PROJECT TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]" ;;
+      update_issue) echo "update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]" ;;
+      add_comment) echo "add_comment KEY BODY [--desc-file PATH] [--markdown]" ;;
+      get_issue) echo "get_issue KEY [FIELDS] [--summary-only]" ;;
+      validate_adf) echo "validate_adf PATH_TO_ADF_JSON [--bisect]" ;;
+      get_transitions) echo "get_transitions KEY" ;;
+      transition_issue) echo "transition_issue KEY TRANSITION_ID" ;;
+      search_jql) echo "search_jql JQL [max_results]" ;;
+      get_projects) echo "get_projects [max_results]" ;;
+      get_issue_types) echo "get_issue_types PROJECT" ;;
+      lookup_user) echo "lookup_user QUERY" ;;
+      add_worklog) echo "add_worklog KEY TIME_SPENT" ;;
+      upload_attachment) echo "upload_attachment KEY FILE [name]" ;;
+      get_remote_links) echo "get_remote_links KEY" ;;
+      test_connection) echo "test_connection" ;;
+      *) echo "$1 [args...]" ;;
+    esac
+}
+
+# _validate_adf_or_error ADF_JSON OP_NAME
+# Runs adf-validate.mjs on the input. On failure, emits api:"error" envelope
+# to stdout (and returns 1) so callers can short-circuit before HTTP.
+# Silently no-ops if Node is unavailable (the REST call will catch errors).
+_validate_adf_or_error() {
+    local adf="$1" op="$2"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if ! command -v node >/dev/null 2>&1; then
+        return 0
+    fi
+    local tmp
+    tmp="$(mktemp)"
+    printf '%s' "$adf" > "$tmp"
+    local result rc
+    result=$(node "$script_dir/adf-validate.mjs" "$tmp" 2>&1) && rc=0 || rc=$?
+    rm -f "$tmp"
+    if [[ $rc -ne 0 ]]; then
+        local rule path msg
+        rule=$(echo "$result" | jq -r '.rule // "validation_failed"')
+        path=$(echo "$result" | jq -r '.path // ""')
+        msg=$(echo "$result"  | jq -r '.message // "ADF validation failed"')
+        jq -n --arg op "$op" --arg rule "$rule" --arg path "$path" --arg msg "$msg" \
+            '{api:"error", operation:$op, rule:$rule, path:$path, error:$msg}'
+        return 1
+    fi
+    return 0
+}
+
 # --- Operation Handlers ---
 
 # Get issue operation
@@ -183,38 +349,61 @@ op_create_issue() {
     local summary="$3"
     local description="${4:-}"
 
-    # Build the issue data
-    # Note: Jira API v3 requires description in ADF format. _to_adf_body
-    # passes through pre-built ADF docs unchanged, or wraps plain text.
+    local desc_file="$(_flag_value desc-file)"
+    local markdown_bool="0"; _has_bool markdown && markdown_bool="1"
+
+    local desc_adf=""
+    if [[ -n "$description" || -n "$desc_file" || "$markdown_bool" == "1" ]]; then
+        desc_adf=$(_resolve_content_input "$description" "$desc_file" "$markdown_bool") || {
+            jq -n --arg op "create_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+            return 1
+        }
+    fi
+
+    local _is_adf="0"
+    if [[ -n "$desc_file" || "$markdown_bool" == "1" ]]; then
+        _is_adf="1"
+    elif [[ -n "$description" ]] && _input_was_adf "$description"; then
+        _is_adf="1"
+    fi
+    if [[ "$_is_adf" == "1" && -n "$desc_adf" ]]; then
+        _validate_adf_or_error "$desc_adf" "create_issue" || return 1
+    fi
+
+    local parent_key="$(_flag_value parent)"
+    if [[ -n "$parent_key" ]]; then
+        if ! [[ "$parent_key" =~ ^[A-Z][A-Z0-9_]+-[0-9]+$ ]]; then
+            jq -n --arg op "create_issue" --arg p "$parent_key" \
+              '{api:"error", operation:$op, error:("--parent must match ^[A-Z][A-Z0-9_]+-[0-9]+$ — got: " + $p)}'
+            return 1
+        fi
+    fi
+
     local issue_data
-    if [[ -n "$description" ]]; then
-        local desc_adf
-        desc_adf=$(_to_adf_body "$description")
+    if [[ -n "$desc_adf" && -n "$parent_key" ]]; then
         issue_data=$(jq -n \
-            --arg project "$project_key" \
-            --arg type "$issue_type" \
-            --arg summary "$summary" \
-            --argjson desc "$desc_adf" \
-            '{
-                "fields": {
-                    "project": {"key": $project},
-                    "issuetype": {"name": $type},
-                    "summary": $summary,
-                    "description": $desc
-                }
-            }')
+            --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" \
+            --argjson desc "$desc_adf" --arg parent "$parent_key" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary, description:$desc, parent:{key:$parent}}}')
+    elif [[ -n "$desc_adf" ]]; then
+        issue_data=$(jq -n \
+            --arg project "$project_key" --arg type "$issue_type" \
+            --arg summary "$summary" --argjson desc "$desc_adf" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary, description:$desc}}')
+    elif [[ -n "$parent_key" ]]; then
+        issue_data=$(jq -n \
+            --arg project "$project_key" --arg type "$issue_type" \
+            --arg summary "$summary" --arg parent "$parent_key" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary, parent:{key:$parent}}}')
     else
         issue_data=$(jq -n \
-            --arg project "$project_key" \
-            --arg type "$issue_type" \
-            --arg summary "$summary" \
-            '{
-                "fields": {
-                    "project": {"key": $project},
-                    "issuetype": {"name": $type},
-                    "summary": $summary
-                }
-            }')
+            --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" \
+            '{fields:{project:{key:$project}, issuetype:{name:$type}, summary:$summary}}')
+    fi
+
+    if [[ "${JIRA_WRITER_DRY_RUN:-}" == "1" ]]; then
+        echo "$issue_data"
+        return 0
     fi
 
     # Check REST availability
@@ -232,6 +421,13 @@ op_create_issue() {
         output_rest_success "$result"
         return 0
     else
+        if [[ "$_is_adf" == "1" ]]; then
+            log_error "REST create failed: $result"
+            jq -n --arg op "create_issue" --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" --arg err "$result" \
+                '{api:"error", operation:$op, params:{projectKey:$project, issueTypeName:$type, summary:$summary}, rest_error:$err,
+                  note:"REST failed for ADF input — MCP fallback not viable."}'
+            return 1
+        fi
         # Fall back params for MCP
         local mcp_params
         mcp_params=$(jq -n \
@@ -257,6 +453,7 @@ op_create_issue() {
 op_update_issue() {
     local issue_key="$1"
     local fields_json="$2"
+    local is_adf_input="${3:-0}"
 
     # Validate JSON input before anything else so the error returns regardless
     # of credential state.
@@ -269,6 +466,15 @@ op_update_issue() {
             "input": $input
         }'
         return 1
+    fi
+
+    # Pre-flight ADF validation when input was constructed as ADF
+    if [[ "$is_adf_input" == "1" ]]; then
+        local desc
+        desc=$(echo "$fields_json" | jq -c '.description // empty')
+        if [[ -n "$desc" && "$desc" != "null" ]]; then
+            _validate_adf_or_error "$desc" "update_issue" || return 1
+        fi
     fi
 
     # Build MCP params once, reused at both fallback sites.
@@ -297,6 +503,13 @@ op_update_issue() {
         fi
         return 0
     else
+        if [[ "$is_adf_input" == "1" ]]; then
+            log_error "REST update failed: $result"
+            jq -n --arg op "update_issue" --arg key "$issue_key" --arg err "$result" \
+                '{api:"error", operation:$op, params:{issueIdOrKey:$key}, rest_error:$err,
+                  note:"REST failed for ADF input — MCP fallback not viable."}'
+            return 1
+        fi
         output_mcp_fallback "editJiraIssue" "$mcp_params" "$result"
         return 1
     fi
@@ -306,6 +519,7 @@ op_update_issue() {
 op_add_comment() {
     local issue_key="$1"
     local comment_body="$2"
+    local is_adf_input="${3:-0}"
 
     # Check REST availability
     if ! check_rest_available; then
@@ -325,12 +539,24 @@ op_add_comment() {
     local comment_data
     comment_data=$(jq -n --argjson body "$body_adf" '{body: $body}')
 
+    # Pre-flight ADF validation when input was constructed as ADF
+    if [[ "$is_adf_input" == "1" ]]; then
+        _validate_adf_or_error "$body_adf" "add_comment" || return 1
+    fi
+
     # Try REST API
     local result
     if result=$(jira_add_comment "$issue_key" "$comment_data" 2>&1); then
         output_rest_success "$result"
         return 0
     else
+        if [[ "$is_adf_input" == "1" ]]; then
+            log_error "REST add_comment failed: $result"
+            jq -n --arg op "add_comment" --arg key "$issue_key" --arg err "$result" \
+                '{api:"error", operation:$op, params:{issueIdOrKey:$key}, rest_error:$err,
+                  note:"REST failed for ADF input — MCP fallback not viable."}'
+            return 1
+        fi
         local _note=""
         _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
         output_mcp_fallback "addCommentToJiraIssue" \
@@ -625,6 +851,35 @@ op_test_connection() {
     fi
 }
 
+# Validate ADF operation
+op_validate_adf() {
+    local input_path="$1"
+    local bisect_flag=""
+    if [[ "${2:-}" == "--bisect" ]]; then bisect_flag="--bisect"; fi
+    if [[ -z "$input_path" || ! -r "$input_path" ]]; then
+        jq -n '{api:"error", operation:"validate_adf", error:"path required and must be readable"}'
+        return 1
+    fi
+    if ! command -v node >/dev/null 2>&1; then
+        jq -n '{api:"error", operation:"validate_adf", error:"Node 18+ required for validate_adf"}'
+        return 1
+    fi
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local result rc
+    result=$(node "$script_dir/adf-validate.mjs" "$input_path" $bisect_flag 2>&1) && rc=0 || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        jq -n --argjson data "$result" '{api:"rest", data:$data}'
+        return 0
+    else
+        jq -n --argjson data "$result" '{api:"error", operation:"validate_adf",
+                                          error:($data.message // "validation failed"),
+                                          rule:($data.rule // null),
+                                          path:($data.path // null)}'
+        return 1
+    fi
+}
+
 # --- Main Entry Point ---
 
 print_usage() {
@@ -644,6 +899,7 @@ print_usage() {
     echo "  add_worklog KEY TIME_SPENT       - Add worklog entry" >&2
     echo "  upload_attachment KEY FILE [name] - Upload file attachment" >&2
     echo "  get_remote_links KEY             - Get remote issue links" >&2
+    echo "  validate_adf PATH_TO_ADF_JSON [--bisect] - Validate ADF locally (no Jira call)" >&2
     echo "  test_connection                  - Test API connection" >&2
     echo "" >&2
     echo "Output:" >&2
@@ -670,6 +926,7 @@ KNOWN_OPS=(
     add_worklog
     upload_attachment
     get_remote_links
+    validate_adf
     test_connection
 )
 
@@ -805,6 +1062,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
         echo "[WARN] If you invoked this from a Claude Code skill, the plugin runtime may have changed." >&2
     fi
 
+    # Source-only mode: when called with `--source-only`, expose functions but skip dispatch.
+    if [[ "${1:-}" == "--source-only" ]]; then
+        return 0 2>/dev/null || exit 0
+    fi
+
     if [[ $# -lt 1 ]]; then
         print_usage
         exit 1
@@ -816,55 +1078,140 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
 
     case "$operation" in
         get_issue)
-            [[ $# -lt 1 ]] && { echo "Error: get_issue requires issue key" >&2; exit 1; }
-            op_get_issue "$@"
+            _parse_flags "summary-only" -- "$@"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
+            if [[ $# -lt 1 ]]; then
+                echo "Error: missing required arguments for get_issue" >&2
+                echo "Usage: $(_usage_for_op get_issue)" >&2
+                exit 1
+            fi
+            if _has_bool summary-only; then
+                op_get_issue "$1" "summary,issuetype,parent,status,assignee"
+            else
+                op_get_issue "$@"
+            fi
             ;;
         create_issue)
-            [[ $# -lt 3 ]] && { echo "Error: create_issue requires PROJECT TYPE SUMMARY" >&2; exit 1; }
+            _parse_flags "desc-file,markdown,parent" -- "$@"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
+            if [[ $# -lt 3 ]]; then
+                echo "Error: missing required arguments for create_issue" >&2
+                echo "Usage: $(_usage_for_op create_issue)" >&2
+                exit 1
+            fi
             op_create_issue "$@"
             ;;
         update_issue)
-            [[ $# -lt 2 ]] && { echo "Error: update_issue requires KEY FIELDS_JSON" >&2; exit 1; }
-            op_update_issue "$@"
+            _parse_flags "desc-file,markdown" -- "$@"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
+            _df="$(_flag_value desc-file)"; _md="0"
+            _has_bool markdown && _md="1"
+            if [[ -n "$_df" || "$_md" == "1" ]]; then
+                if [[ $# -lt 1 ]]; then
+                    echo "Error: missing required arguments for update_issue" >&2
+                    echo "Usage: $(_usage_for_op update_issue)" >&2
+                    exit 1
+                fi
+                _key="$1"
+                _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
+                    jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+                    exit 1
+                }
+                _fields=$(jq -n --argjson desc "$_adf" '{description: $desc}')
+                op_update_issue "$_key" "$_fields" "1"
+            else
+                if [[ $# -lt 2 ]]; then
+                    echo "Error: missing required arguments for update_issue" >&2
+                    echo "Usage: $(_usage_for_op update_issue)" >&2
+                    exit 1
+                fi
+                _is_adf="0"
+                # If the fields_json contains an ADF doc as .description, treat as ADF input
+                # Mirrors _ADF_DOC_JQ_FILTER but inspects .description inside a fields_json
+                # wrapper instead of the top-level input. Keep in sync if _ADF_DOC_JQ_FILTER
+                # changes.
+                if [[ -n "${2:-}" ]] && echo "$2" | jq -e '.description | (type == "object" and .type == "doc" and (.version | type) == "number" and (.content | type) == "array")' >/dev/null 2>&1; then
+                    _is_adf="1"
+                fi
+                op_update_issue "$1" "$2" "$_is_adf"
+            fi
             ;;
         add_comment)
-            [[ $# -lt 2 ]] && { echo "Error: add_comment requires KEY BODY" >&2; exit 1; }
-            op_add_comment "$@"
+            _parse_flags "desc-file,markdown" -- "$@"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
+            _df="$(_flag_value desc-file)"; _md="0"
+            _has_bool markdown && _md="1"
+            if [[ -n "$_df" || "$_md" == "1" ]]; then
+                if [[ $# -lt 1 ]]; then
+                    echo "Error: missing required arguments for add_comment" >&2
+                    echo "Usage: $(_usage_for_op add_comment)" >&2
+                    exit 1
+                fi
+                _key="$1"
+                _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
+                    jq -n --arg op "add_comment" '{api:"error", operation:$op, error:"failed to resolve comment body"}'
+                    exit 1
+                }
+                op_add_comment "$_key" "$_adf" "1"
+            else
+                if [[ $# -lt 2 ]]; then
+                    echo "Error: missing required arguments for add_comment" >&2
+                    echo "Usage: $(_usage_for_op add_comment)" >&2
+                    exit 1
+                fi
+                _is_adf_comment="0"
+                _input_was_adf "${2:-}" && _is_adf_comment="1"
+                op_add_comment "$1" "$2" "$_is_adf_comment"
+            fi
             ;;
         get_transitions)
-            [[ $# -lt 1 ]] && { echo "Error: get_transitions requires issue key" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for get_transitions" >&2; echo "Usage: $(_usage_for_op get_transitions)" >&2; exit 1; }
             op_get_transitions "$@"
             ;;
         transition_issue)
-            [[ $# -lt 2 ]] && { echo "Error: transition_issue requires KEY TRANSITION_ID" >&2; exit 1; }
+            [[ $# -lt 2 ]] && { echo "Error: missing required arguments for transition_issue" >&2; echo "Usage: $(_usage_for_op transition_issue)" >&2; exit 1; }
             op_transition_issue "$@"
             ;;
         search_jql)
-            [[ $# -lt 1 ]] && { echo "Error: search_jql requires JQL query" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for search_jql" >&2; echo "Usage: $(_usage_for_op search_jql)" >&2; exit 1; }
             op_search_jql "$@"
             ;;
         get_projects)
             op_get_projects "$@"
             ;;
         get_issue_types)
-            [[ $# -lt 1 ]] && { echo "Error: get_issue_types requires project key" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for get_issue_types" >&2; echo "Usage: $(_usage_for_op get_issue_types)" >&2; exit 1; }
             op_get_issue_types "$@"
             ;;
         lookup_user)
-            [[ $# -lt 1 ]] && { echo "Error: lookup_user requires query" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for lookup_user" >&2; echo "Usage: $(_usage_for_op lookup_user)" >&2; exit 1; }
             op_lookup_user "$@"
             ;;
         add_worklog)
-            [[ $# -lt 2 ]] && { echo "Error: add_worklog requires KEY TIME_SPENT" >&2; exit 1; }
+            [[ $# -lt 2 ]] && { echo "Error: missing required arguments for add_worklog" >&2; echo "Usage: $(_usage_for_op add_worklog)" >&2; exit 1; }
             op_add_worklog "$@"
             ;;
         upload_attachment)
-            [[ $# -lt 2 ]] && { echo "Error: upload_attachment requires KEY FILE" >&2; exit 1; }
+            [[ $# -lt 2 ]] && { echo "Error: missing required arguments for upload_attachment" >&2; echo "Usage: $(_usage_for_op upload_attachment)" >&2; exit 1; }
             op_upload_attachment "$@"
             ;;
         get_remote_links)
-            [[ $# -lt 1 ]] && { echo "Error: get_remote_links requires issue key" >&2; exit 1; }
+            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for get_remote_links" >&2; echo "Usage: $(_usage_for_op get_remote_links)" >&2; exit 1; }
             op_get_remote_links "$@"
+            ;;
+        validate_adf)
+            _parse_flags "bisect" -- "$@"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
+            if [[ $# -lt 1 ]]; then
+                echo "Error: missing required arguments for validate_adf" >&2
+                echo "Usage: $(_usage_for_op validate_adf)" >&2
+                exit 1
+            fi
+            if _has_bool bisect; then
+                op_validate_adf "$1" --bisect
+            else
+                op_validate_adf "$1"
+            fi
             ;;
         test_connection)
             op_test_connection
