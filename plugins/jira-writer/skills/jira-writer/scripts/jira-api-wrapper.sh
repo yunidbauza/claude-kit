@@ -152,6 +152,67 @@ _input_was_adf() {
     printf '%s' "$input" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1
 }
 
+# _parse_flags KNOWN_CSV -- "$@"
+# Splits "$@" into:
+#   _POSITIONAL=(...)   positional args
+#   _FLAGS=(name=val ...) single-value flags
+#   _BOOLS=(name ...)     boolean (value-less) flags
+# KNOWN_CSV is a comma-separated list of long flag names. Single-value vs
+# boolean is determined by lookahead: if the next token starts with -- or is
+# absent, treat as boolean. Unknown flags pass through as positional args.
+_parse_flags() {
+    local known_csv="$1"; shift
+    [[ "${1:-}" == "--" ]] && shift
+    _POSITIONAL=()
+    _FLAGS=()
+    _BOOLS=()
+    local known=",$known_csv,"
+    while [[ $# -gt 0 ]]; do
+        local arg="$1"
+        if [[ "$arg" == --* ]]; then
+            local name="${arg#--}"
+            if [[ "$known" == *",$name,"* ]]; then
+                # Bool flags: markdown, bisect, summary-only
+                if [[ "$name" == "markdown" || "$name" == "bisect" || "$name" == "summary-only" ]]; then
+                    _BOOLS+=("$name")
+                    shift
+                else
+                    if [[ $# -lt 2 ]]; then
+                        echo "Error: flag --$name requires a value" >&2
+                        return 2
+                    fi
+                    _FLAGS+=("$name=$2")
+                    shift 2
+                fi
+            else
+                _POSITIONAL+=("$arg")
+                shift
+            fi
+        else
+            _POSITIONAL+=("$arg")
+            shift
+        fi
+    done
+}
+
+# _flag_value NAME — echoes the value of the named single-value flag, or "" if absent.
+_flag_value() {
+    local name="$1" entry
+    for entry in "${_FLAGS[@]:-}"; do
+        [[ "$entry" == "$name="* ]] && { echo "${entry#*=}"; return 0; }
+    done
+    return 0
+}
+
+# _has_bool NAME — returns 0 if the named bool flag is present.
+_has_bool() {
+    local name="$1" entry
+    for entry in "${_BOOLS[@]:-}"; do
+        [[ "$entry" == "$name" ]] && return 0
+    done
+    return 1
+}
+
 # --- Operation Handlers ---
 
 # Get issue operation
@@ -803,6 +864,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
     if [[ -z "${CLAUDE_PLUGIN_ROOT:-}" ]] && [[ "${BASH_SOURCE[0]}" != *"/plugins/cache/"* ]]; then
         echo "[WARN] CLAUDE_PLUGIN_ROOT is unset and script is not under /plugins/cache/." >&2
         echo "[WARN] If you invoked this from a Claude Code skill, the plugin runtime may have changed." >&2
+    fi
+
+    # Source-only mode: when called with `--source-only`, expose functions but skip dispatch.
+    if [[ "${1:-}" == "--source-only" ]]; then
+        return 0 2>/dev/null || exit 0
     fi
 
     if [[ $# -lt 1 ]]; then
