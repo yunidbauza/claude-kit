@@ -11,12 +11,37 @@ function inlineTokens(tokens) {
   return out;
 }
 
+function listItem(item) {
+  const blocks = (item.tokens || [])
+    .map(t => t.type === 'text' ? { type: 'paragraph', content: inlineTokens(t.tokens || [{ type: 'text', text: t.text }]) } : tokenToAdf(t))
+    .filter(Boolean);
+  return { type: 'listItem', content: blocks.length ? blocks : [{ type: 'paragraph', content: [] }] };
+}
+
 function tokenToAdf(token) {
   switch (token.type) {
     case 'heading':
       return { type: 'heading', attrs: { level: token.depth }, content: inlineTokens(token.tokens) };
     case 'paragraph':
       return { type: 'paragraph', content: inlineTokens(token.tokens) };
+    case 'list': {
+      const isTaskList = token.items.some(it => it.task === true);
+      if (isTaskList) return null; // task lists handled in Task 4
+      return {
+        type: token.ordered ? 'orderedList' : 'bulletList',
+        content: token.items.map(listItem),
+      };
+    }
+    case 'code':
+      return {
+        type: 'codeBlock',
+        attrs: { language: token.lang || null },
+        content: token.text ? [{ type: 'text', text: token.text + (token.text.endsWith('\n') ? '' : '\n') }] : [],
+      };
+    case 'blockquote':
+      return { type: 'blockquote', content: (token.tokens || []).map(tokenToAdf).filter(Boolean) };
+    case 'hr':
+      return { type: 'rule' };
     case 'space':
       return null;
     default:

@@ -39,3 +39,38 @@ test('heading levels 1-6 map to heading nodes', async () => {
   assert.equal(adf.content[0].type, 'heading');
   assert.equal(adf.content[0].content[0].text, 'h1');
 });
+
+test('bullet list of non-task items becomes bulletList (regression: task=false guard)', async () => {
+  const adf = await convert('- one\n- two\n- three');
+  assert.equal(adf.content[0].type, 'bulletList');
+  assert.equal(adf.content[0].content.length, 3);
+  assert.equal(adf.content[0].content[0].type, 'listItem');
+  assert.equal(adf.content[0].content[0].content[0].type, 'paragraph');
+  assert.equal(adf.content[0].content[0].content[0].content[0].text, 'one');
+});
+
+test('ordered list becomes orderedList', async () => {
+  const adf = await convert('1. first\n2. second');
+  assert.equal(adf.content[0].type, 'orderedList');
+  assert.equal(adf.content[0].content.length, 2);
+});
+
+test('fenced code block becomes codeBlock with language', async () => {
+  const adf = await convert('```js\nconst x = 1;\n```');
+  assert.equal(adf.content[0].type, 'codeBlock');
+  assert.equal(adf.content[0].attrs.language, 'js');
+  assert.equal(adf.content[0].content[0].type, 'text');
+  assert.equal(adf.content[0].content[0].text, 'const x = 1;\n');
+});
+
+test('blockquote wraps inner paragraph', async () => {
+  const adf = await convert('> quoted');
+  assert.equal(adf.content[0].type, 'blockquote');
+  assert.equal(adf.content[0].content[0].type, 'paragraph');
+  assert.equal(adf.content[0].content[0].content[0].text, 'quoted');
+});
+
+test('hr becomes rule node', async () => {
+  const adf = await convert('---');
+  assert.equal(adf.content[0].type, 'rule');
+});
