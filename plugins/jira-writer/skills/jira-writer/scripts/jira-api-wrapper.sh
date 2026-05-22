@@ -1127,6 +1127,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                 fi
                 _is_adf="0"
                 # If the fields_json contains an ADF doc as .description, treat as ADF input
+                # Mirrors _ADF_DOC_JQ_FILTER but inspects .description inside a fields_json
+                # wrapper instead of the top-level input. Keep in sync if _ADF_DOC_JQ_FILTER
+                # changes.
                 if [[ -n "${2:-}" ]] && echo "$2" | jq -e '.description | (type == "object" and .type == "doc" and (.version | type) == "number" and (.content | type) == "array")' >/dev/null 2>&1; then
                     _is_adf="1"
                 fi

@@ -9,6 +9,7 @@ on:
     paths:
       - 'plugins/jira-writer/**'
       - '.github/workflows/jira-writer-tests.yml'
+  workflow_dispatch:
 
 jobs:
   test:

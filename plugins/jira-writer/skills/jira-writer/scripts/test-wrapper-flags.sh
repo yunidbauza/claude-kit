@@ -96,9 +96,11 @@ setup_mock_curl() {
   MOCK_BIN=$(mktemp -d)
   cat > "$MOCK_BIN/curl" <<'BASH'
 #!/usr/bin/env bash
-# Echo a fake 4xx JSON body, set non-zero exit to emulate REST failure path
+# Emit two-line response matching `curl -s -w "\n%{http_code}"` output:
+# body line then http_code line. Exit 0 so jira-rest-api.sh routes on http_code.
 echo '{"errorMessages":["INVALID_INPUT"],"errors":{}}'
-exit 22
+echo "400"
+exit 0
 BASH
   chmod +x "$MOCK_BIN/curl"
   export PATH="$MOCK_BIN:$PATH"
