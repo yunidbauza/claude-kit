@@ -267,6 +267,35 @@ _resolve_content_input() {
     _to_adf_body "$desc"
 }
 
+# _validate_adf_or_error ADF_JSON OP_NAME
+# Runs adf-validate.mjs on the input. On failure, emits api:"error" envelope
+# to stdout (and returns 1) so callers can short-circuit before HTTP.
+# Silently no-ops if Node is unavailable (the REST call will catch errors).
+_validate_adf_or_error() {
+    local adf="$1" op="$2"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if ! command -v node >/dev/null 2>&1; then
+        return 0
+    fi
+    local tmp
+    tmp="$(mktemp)"
+    printf '%s' "$adf" > "$tmp"
+    local result rc
+    result=$(node "$script_dir/adf-validate.mjs" "$tmp" 2>&1) && rc=0 || rc=$?
+    rm -f "$tmp"
+    if [[ $rc -ne 0 ]]; then
+        local rule path msg
+        rule=$(echo "$result" | jq -r '.rule // "validation_failed"')
+        path=$(echo "$result" | jq -r '.path // ""')
+        msg=$(echo "$result"  | jq -r '.message // "ADF validation failed"')
+        jq -n --arg op "$op" --arg rule "$rule" --arg path "$path" --arg msg "$msg" \
+            '{api:"error", operation:$op, rule:$rule, path:$path, error:$msg}'
+        return 1
+    fi
+    return 0
+}
+
 # --- Operation Handlers ---
 
 # Get issue operation
@@ -309,6 +338,16 @@ op_create_issue() {
         }
     fi
 
+    local _is_adf="0"
+    if [[ -n "$desc_file" || "$markdown_bool" == "1" ]]; then
+        _is_adf="1"
+    elif [[ -n "$description" ]] && _input_was_adf "$description"; then
+        _is_adf="1"
+    fi
+    if [[ "$_is_adf" == "1" && -n "$desc_adf" ]]; then
+        _validate_adf_or_error "$desc_adf" "create_issue" || return 1
+    fi
+
     local issue_data
     if [[ -n "$desc_adf" ]]; then
         issue_data=$(jq -n \
@@ -336,6 +375,13 @@ op_create_issue() {
         output_rest_success "$result"
         return 0
     else
+        if [[ "$_is_adf" == "1" ]]; then
+            log_error "REST create failed: $result"
+            jq -n --arg op "create_issue" --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" --arg err "$result" \
+                '{api:"error", operation:$op, params:{projectKey:$project, issueTypeName:$type, summary:$summary}, rest_error:$err,
+                  note:"REST failed for ADF input — MCP fallback not viable."}'
+            return 1
+        fi
         # Fall back params for MCP
         local mcp_params
         mcp_params=$(jq -n \
@@ -361,6 +407,7 @@ op_create_issue() {
 op_update_issue() {
     local issue_key="$1"
     local fields_json="$2"
+    local is_adf_input="${3:-0}"
 
     # Validate JSON input before anything else so the error returns regardless
     # of credential state.
@@ -373,6 +420,15 @@ op_update_issue() {
             "input": $input
         }'
         return 1
+    fi
+
+    # Pre-flight ADF validation when input was constructed as ADF
+    if [[ "$is_adf_input" == "1" ]]; then
+        local desc
+        desc=$(echo "$fields_json" | jq -c '.description // empty')
+        if [[ -n "$desc" && "$desc" != "null" ]]; then
+            _validate_adf_or_error "$desc" "update_issue" || return 1
+        fi
     fi
 
     # Build MCP params once, reused at both fallback sites.
@@ -401,6 +457,13 @@ op_update_issue() {
         fi
         return 0
     else
+        if [[ "$is_adf_input" == "1" ]]; then
+            log_error "REST update failed: $result"
+            jq -n --arg op "update_issue" --arg key "$issue_key" --arg err "$result" \
+                '{api:"error", operation:$op, issue_key:$key, rest_error:$err,
+                  note:"REST failed for ADF input — MCP fallback not viable."}'
+            return 1
+        fi
         output_mcp_fallback "editJiraIssue" "$mcp_params" "$result"
         return 1
     fi
@@ -410,6 +473,7 @@ op_update_issue() {
 op_add_comment() {
     local issue_key="$1"
     local comment_body="$2"
+    local is_adf_input="${3:-0}"
 
     # Check REST availability
     if ! check_rest_available; then
@@ -429,12 +493,24 @@ op_add_comment() {
     local comment_data
     comment_data=$(jq -n --argjson body "$body_adf" '{body: $body}')
 
+    # Pre-flight ADF validation when input was constructed as ADF
+    if [[ "$is_adf_input" == "1" ]]; then
+        _validate_adf_or_error "$body_adf" "add_comment" || return 1
+    fi
+
     # Try REST API
     local result
     if result=$(jira_add_comment "$issue_key" "$comment_data" 2>&1); then
         output_rest_success "$result"
         return 0
     else
+        if [[ "$is_adf_input" == "1" ]]; then
+            log_error "REST add_comment failed: $result"
+            jq -n --arg op "add_comment" --arg key "$issue_key" --arg err "$result" \
+                '{api:"error", operation:$op, issue_key:$key, rest_error:$err,
+                  note:"REST failed for ADF input — MCP fallback not viable."}'
+            return 1
+        fi
         local _note=""
         _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
         output_mcp_fallback "addCommentToJiraIssue" \
@@ -940,51 +1016,57 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
         update_issue)
             _parse_flags "desc-file,markdown" -- "$@"
             set -- "${_POSITIONAL[@]:-}"
-            local _df="$(_flag_value desc-file)" _md="0"
+            _df="$(_flag_value desc-file)"; _md="0"
             _has_bool markdown && _md="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
                 if [[ $# -lt 1 ]]; then
                     echo "Error: update_issue requires KEY" >&2
                     exit 1
                 fi
-                local _adf _key="$1"
+                _key="$1"
                 _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
                     jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
                     exit 1
                 }
-                local _fields
                 _fields=$(jq -n --argjson desc "$_adf" '{description: $desc}')
-                op_update_issue "$_key" "$_fields"
+                op_update_issue "$_key" "$_fields" "1"
             else
                 if [[ $# -lt 2 ]]; then
                     echo "Error: update_issue requires KEY FIELDS_JSON" >&2
                     exit 1
                 fi
-                op_update_issue "$@"
+                _is_adf="0"
+                # If the fields_json contains an ADF doc as .description, treat as ADF input
+                if [[ -n "${2:-}" ]] && echo "$2" | jq -e '.description.type == "doc"' >/dev/null 2>&1; then
+                    _is_adf="1"
+                fi
+                op_update_issue "$1" "$2" "$_is_adf"
             fi
             ;;
         add_comment)
             _parse_flags "desc-file,markdown" -- "$@"
             set -- "${_POSITIONAL[@]:-}"
-            local _df="$(_flag_value desc-file)" _md="0"
+            _df="$(_flag_value desc-file)"; _md="0"
             _has_bool markdown && _md="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
                 if [[ $# -lt 1 ]]; then
                     echo "Error: add_comment requires KEY" >&2
                     exit 1
                 fi
-                local _adf _key="$1"
+                _key="$1"
                 _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
                     jq -n --arg op "add_comment" '{api:"error", operation:$op, error:"failed to resolve comment body"}'
                     exit 1
                 }
-                op_add_comment "$_key" "$_adf"
+                op_add_comment "$_key" "$_adf" "1"
             else
                 if [[ $# -lt 2 ]]; then
                     echo "Error: add_comment requires KEY BODY" >&2
                     exit 1
                 fi
-                op_add_comment "$@"
+                _is_adf_comment="0"
+                _input_was_adf "${2:-}" && _is_adf_comment="1"
+                op_add_comment "$1" "$2" "$_is_adf_comment"
             fi
             ;;
         get_transitions)

@@ -91,4 +91,61 @@ test_add_comment_desc_file() {
 }
 test_add_comment_desc_file
 
+# Mock curl by prepending a temp dir to PATH that contains a fake curl.
+setup_mock_curl() {
+  MOCK_BIN=$(mktemp -d)
+  cat > "$MOCK_BIN/curl" <<'BASH'
+#!/usr/bin/env bash
+# Echo a fake 4xx JSON body, set non-zero exit to emulate REST failure path
+echo '{"errorMessages":["INVALID_INPUT"],"errors":{}}'
+exit 22
+BASH
+  chmod +x "$MOCK_BIN/curl"
+  export PATH="$MOCK_BIN:$PATH"
+  export JIRA_DOMAIN="example.atlassian.net"
+  export JIRA_API_KEY="user@example.com:fake-token"
+}
+
+teardown_mock_curl() {
+  rm -rf "$MOCK_BIN"
+  PATH=$(echo "$PATH" | sed -e "s|$MOCK_BIN:||")
+}
+
+test_adf_failure_is_hard_error() {
+  setup_mock_curl
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" update_issue INCORP-1 \
+    '{"description":{"type":"doc","version":1,"content":[]}}' 2>/dev/null || true)
+  echo "$out" | jq -e '.api == "error"' >/dev/null \
+    || fail "ADF input REST failure should be api:error, got: $out"
+  echo "$out" | jq -e '.rest_error | test("INVALID_INPUT")' >/dev/null \
+    || fail "ADF input REST failure should include REST errorMessages: $out"
+  teardown_mock_curl
+  pass "ADF input → api:error on REST 4xx"
+}
+
+test_plain_text_failure_still_mcp_fallback() {
+  setup_mock_curl
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" create_issue INCORP Bug "x" "plain body" 2>/dev/null || true)
+  echo "$out" | jq -e '.api == "mcp_fallback"' >/dev/null \
+    || fail "plain text REST failure should still be mcp_fallback, got: $out"
+  teardown_mock_curl
+  pass "plain text → mcp_fallback on REST 4xx (unchanged)"
+}
+
+test_preflight_validation_blocks_invalid_adf() {
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" update_issue INCORP-1 \
+    '{"description":{"type":"doc","version":1,"content":[{"type":"taskList","attrs":{},"content":[]}]}}' \
+    2>/dev/null || true)
+  echo "$out" | jq -e '.api == "error" and (.rule // .error | test("localId"))' >/dev/null \
+    || fail "missing localId should fail pre-flight: $out"
+  pass "pre-flight validation blocks invalid ADF"
+}
+
+test_adf_failure_is_hard_error
+test_plain_text_failure_still_mcp_fallback
+test_preflight_validation_blocks_invalid_adf
+
 echo "test-wrapper-flags.sh: all pass"
