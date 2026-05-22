@@ -36,6 +36,8 @@ rm -rf /tmp/claude-kit
 | Atlassian MCP | Fallback when REST fails | No (optional) |
 | `mmdc` | Mermaid CLI for diagrams | For diagrams only |
 
+**jira-writer** also benefits from Node 18+ when present — enables the markdown-to-ADF converter and ADF validator. Without Node, plain-text and pre-built-ADF paths still work.
+
 ## Environment Setup
 
 ```bash
