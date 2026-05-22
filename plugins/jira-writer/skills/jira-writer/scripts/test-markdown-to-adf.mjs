@@ -102,3 +102,53 @@ test('mixed list (some task, some not) treats as taskList when any item is task'
   assert.equal(adf.content[0].type, 'taskList');
   assert.equal(adf.content[0].content.length, 2);
 });
+
+test('strong wraps text in strong mark', async () => {
+  const adf = await convert('**bold**');
+  const node = adf.content[0].content[0];
+  assert.equal(node.text, 'bold');
+  assert.deepEqual(node.marks, [{ type: 'strong' }]);
+});
+
+test('emphasis wraps text in em mark', async () => {
+  const adf = await convert('*italic*');
+  const node = adf.content[0].content[0];
+  assert.deepEqual(node.marks, [{ type: 'em' }]);
+});
+
+test('code span produces code mark', async () => {
+  const adf = await convert('`x = 1`');
+  const node = adf.content[0].content[0];
+  assert.equal(node.text, 'x = 1');
+  assert.deepEqual(node.marks, [{ type: 'code' }]);
+});
+
+test('link wraps text in link mark with href attrs', async () => {
+  const adf = await convert('[click](https://example.com)');
+  const node = adf.content[0].content[0];
+  assert.equal(node.text, 'click');
+  assert.equal(node.marks[0].type, 'link');
+  assert.equal(node.marks[0].attrs.href, 'https://example.com');
+});
+
+test('code mark is exclusive — strong+code keeps only code', async () => {
+  const adf = await convert('**`compile.ts`**');
+  const node = adf.content[0].content.find(n => n.text === 'compile.ts');
+  assert.ok(node, 'expected a text node for compile.ts');
+  const types = (node.marks || []).map(m => m.type).sort();
+  assert.deepEqual(types, ['code']);
+});
+
+test('HTML entities in text are unescaped', async () => {
+  const adf = await convert('use <category> tag & "quotes"');
+  const text = adf.content[0].content.map(n => n.text).join('');
+  assert.ok(text.includes('<category>'), `got: ${text}`);
+  assert.ok(text.includes('&'), `got: ${text}`);
+  assert.ok(text.includes('"quotes"'), `got: ${text}`);
+});
+
+test('hard break in paragraph becomes hardBreak node', async () => {
+  const adf = await convert('line one  \nline two');
+  const types = adf.content[0].content.map(n => n.type);
+  assert.ok(types.includes('hardBreak'), `types: ${types}`);
+});

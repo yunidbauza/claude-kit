@@ -3,10 +3,47 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { marked } from './vendor/marked/marked.esm.js';
 
+const HTML_ENTITIES = { '&lt;': '<', '&gt;': '>', '&amp;': '&', '&quot;': '"', '&#39;': "'" };
+function unescapeHtml(s) {
+  return s.replace(/&(?:lt|gt|amp|quot|#39);/g, m => HTML_ENTITIES[m]);
+}
+
+function addMark(node, mark) {
+  if (node.type !== 'text') return;
+  const existing = node.marks || [];
+  const hasCode = existing.some(m => m.type === 'code');
+  const isCode = mark.type === 'code';
+  if (hasCode && !isCode) return;          // drop incoming non-code when code present
+  if (isCode && existing.length) node.marks = []; // drop existing when code arrives
+  (node.marks ||= []).push(mark);
+}
+
 function inlineTokens(tokens) {
   const out = [];
   for (const t of tokens || []) {
-    if (t.type === 'text') out.push({ type: 'text', text: t.text });
+    if (t.type === 'text') {
+      out.push({ type: 'text', text: unescapeHtml(t.text) });
+    } else if (t.type === 'strong') {
+      const inner = inlineTokens(t.tokens);
+      for (const n of inner) addMark(n, { type: 'strong' });
+      out.push(...inner);
+    } else if (t.type === 'em') {
+      const inner = inlineTokens(t.tokens);
+      for (const n of inner) addMark(n, { type: 'em' });
+      out.push(...inner);
+    } else if (t.type === 'codespan') {
+      out.push({ type: 'text', text: unescapeHtml(t.text), marks: [{ type: 'code' }] });
+    } else if (t.type === 'link') {
+      const inner = inlineTokens(t.tokens);
+      for (const n of inner) addMark(n, { type: 'link', attrs: { href: t.href } });
+      out.push(...inner);
+    } else if (t.type === 'br') {
+      out.push({ type: 'hardBreak' });
+    } else if (t.type === 'escape') {
+      out.push({ type: 'text', text: t.text });
+    } else if (t.type === 'html') {
+      out.push({ type: 'text', text: t.text });
+    }
   }
   return out;
 }
