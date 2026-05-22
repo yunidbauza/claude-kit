@@ -853,9 +853,9 @@ op_test_connection() {
 
 # Validate ADF operation
 op_validate_adf() {
-    local input_path="$1"; shift || true
+    local input_path="$1"
     local bisect_flag=""
-    if [[ "${1:-}" == "--bisect" ]]; then bisect_flag="--bisect"; fi
+    if [[ "${2:-}" == "--bisect" ]]; then bisect_flag="--bisect"; fi
     if [[ -z "$input_path" || ! -r "$input_path" ]]; then
         jq -n '{api:"error", operation:"validate_adf", error:"path required and must be readable"}'
         return 1
@@ -1079,7 +1079,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
     case "$operation" in
         get_issue)
             _parse_flags "summary-only" -- "$@"
-            set -- "${_POSITIONAL[@]:-}"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
             if [[ $# -lt 1 ]]; then
                 echo "Error: missing required arguments for get_issue" >&2
                 echo "Usage: $(_usage_for_op get_issue)" >&2
@@ -1093,7 +1093,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             ;;
         create_issue)
             _parse_flags "desc-file,markdown,parent" -- "$@"
-            set -- "${_POSITIONAL[@]:-}"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
             if [[ $# -lt 3 ]]; then
                 echo "Error: missing required arguments for create_issue" >&2
                 echo "Usage: $(_usage_for_op create_issue)" >&2
@@ -1103,7 +1103,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             ;;
         update_issue)
             _parse_flags "desc-file,markdown" -- "$@"
-            set -- "${_POSITIONAL[@]:-}"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
             _df="$(_flag_value desc-file)"; _md="0"
             _has_bool markdown && _md="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
@@ -1138,7 +1138,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             ;;
         add_comment)
             _parse_flags "desc-file,markdown" -- "$@"
-            set -- "${_POSITIONAL[@]:-}"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
             _df="$(_flag_value desc-file)"; _md="0"
             _has_bool markdown && _md="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
@@ -1200,8 +1200,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             op_get_remote_links "$@"
             ;;
         validate_adf)
-            [[ $# -lt 1 ]] && { echo "Error: missing required arguments for validate_adf" >&2; echo "Usage: $(_usage_for_op validate_adf)" >&2; exit 1; }
-            op_validate_adf "$@"
+            _parse_flags "bisect" -- "$@"
+            if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
+            if [[ $# -lt 1 ]]; then
+                echo "Error: missing required arguments for validate_adf" >&2
+                echo "Usage: $(_usage_for_op validate_adf)" >&2
+                exit 1
+            fi
+            if _has_bool bisect; then
+                op_validate_adf "$1" --bisect
+            else
+                op_validate_adf "$1"
+            fi
             ;;
         test_connection)
             op_test_connection

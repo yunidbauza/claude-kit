@@ -260,4 +260,37 @@ test_missing_arg_help_lists_signature() {
 test_summary_only_passes_fields
 test_missing_arg_help_lists_signature
 
+test_validate_adf_flag_order() {
+  local tmp=$(mktemp)
+  echo '{"type":"doc","version":1,"content":[]}' > "$tmp"
+  # Flag BEFORE the path — must work the same as flag after
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" validate_adf --bisect "$tmp")
+  echo "$out" | jq -e '.api == "rest" and .data.ok == true' >/dev/null \
+    || fail "validate_adf --bisect <path> (flag-first): $out"
+  rm -f "$tmp"
+  pass "validate_adf flag-order independent"
+}
+
+test_get_issue_empty_positional_arity() {
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" get_issue --summary-only 2>&1 || true)
+  # Should print missing-args error, NOT run with empty key
+  echo "$out" | grep -q "missing required arguments for get_issue" \
+    || fail "get_issue --summary-only (no key) should error, got: $out"
+  pass "get_issue empty positional triggers arity guard"
+}
+
+test_create_issue_empty_positional_arity() {
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" create_issue --markdown 2>&1 || true)
+  echo "$out" | grep -q "missing required arguments for create_issue" \
+    || fail "create_issue --markdown (no project/type/summary) should error, got: $out"
+  pass "create_issue empty positional triggers arity guard"
+}
+
+test_validate_adf_flag_order
+test_get_issue_empty_positional_arity
+test_create_issue_empty_positional_arity
+
 echo "test-wrapper-flags.sh: all pass"
