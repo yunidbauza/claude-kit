@@ -74,3 +74,31 @@ test('hr becomes rule node', async () => {
   const adf = await convert('---');
   assert.equal(adf.content[0].type, 'rule');
 });
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+test('task list with mixed states becomes taskList', async () => {
+  const adf = await convert('- [ ] todo one\n- [x] done two\n- [ ] todo three');
+  const tl = adf.content[0];
+  assert.equal(tl.type, 'taskList');
+  assert.match(tl.attrs.localId, UUID_RE);
+  assert.equal(tl.content.length, 3);
+  const states = tl.content.map(i => i.attrs.state);
+  assert.deepEqual(states, ['TODO', 'DONE', 'TODO']);
+  for (const item of tl.content) {
+    assert.equal(item.type, 'taskItem');
+    assert.match(item.attrs.localId, UUID_RE);
+  }
+});
+
+test('each taskItem gets a unique localId', async () => {
+  const adf = await convert('- [ ] a\n- [ ] b\n- [ ] c');
+  const ids = adf.content[0].content.map(i => i.attrs.localId);
+  assert.equal(new Set(ids).size, 3);
+});
+
+test('mixed list (some task, some not) treats as taskList when any item is task', async () => {
+  const adf = await convert('- [x] checked\n- plain');
+  assert.equal(adf.content[0].type, 'taskList');
+  assert.equal(adf.content[0].content.length, 2);
+});

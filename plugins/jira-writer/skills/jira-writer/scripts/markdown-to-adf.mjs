@@ -18,6 +18,21 @@ function listItem(item) {
   return { type: 'listItem', content: blocks.length ? blocks : [{ type: 'paragraph', content: [] }] };
 }
 
+function taskList(items) {
+  return {
+    type: 'taskList',
+    attrs: { localId: randomUUID() },
+    content: items.map(it => {
+      const inner = (it.tokens || []).find(t => t.type === 'text');
+      return {
+        type: 'taskItem',
+        attrs: { localId: randomUUID(), state: it.checked ? 'DONE' : 'TODO' },
+        content: inner ? inlineTokens(inner.tokens || [{ type: 'text', text: inner.text }]) : [],
+      };
+    }),
+  };
+}
+
 function tokenToAdf(token) {
   switch (token.type) {
     case 'heading':
@@ -26,7 +41,7 @@ function tokenToAdf(token) {
       return { type: 'paragraph', content: inlineTokens(token.tokens) };
     case 'list': {
       const isTaskList = token.items.some(it => it.task === true);
-      if (isTaskList) return null; // task lists handled in Task 4
+      if (isTaskList) return taskList(token.items);
       return {
         type: token.ordered ? 'orderedList' : 'bulletList',
         content: token.items.map(listItem),
