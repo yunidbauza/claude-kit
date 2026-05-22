@@ -460,7 +460,7 @@ op_update_issue() {
         if [[ "$is_adf_input" == "1" ]]; then
             log_error "REST update failed: $result"
             jq -n --arg op "update_issue" --arg key "$issue_key" --arg err "$result" \
-                '{api:"error", operation:$op, issue_key:$key, rest_error:$err,
+                '{api:"error", operation:$op, params:{issueIdOrKey:$key}, rest_error:$err,
                   note:"REST failed for ADF input — MCP fallback not viable."}'
             return 1
         fi
@@ -507,7 +507,7 @@ op_add_comment() {
         if [[ "$is_adf_input" == "1" ]]; then
             log_error "REST add_comment failed: $result"
             jq -n --arg op "add_comment" --arg key "$issue_key" --arg err "$result" \
-                '{api:"error", operation:$op, issue_key:$key, rest_error:$err,
+                '{api:"error", operation:$op, params:{issueIdOrKey:$key}, rest_error:$err,
                   note:"REST failed for ADF input — MCP fallback not viable."}'
             return 1
         fi
@@ -1037,7 +1037,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                 fi
                 _is_adf="0"
                 # If the fields_json contains an ADF doc as .description, treat as ADF input
-                if [[ -n "${2:-}" ]] && echo "$2" | jq -e '.description.type == "doc"' >/dev/null 2>&1; then
+                if [[ -n "${2:-}" ]] && echo "$2" | jq -e '.description | (type == "object" and .type == "doc" and (.version | type) == "number" and (.content | type) == "array")' >/dev/null 2>&1; then
                     _is_adf="1"
                 fi
                 op_update_issue "$1" "$2" "$_is_adf"

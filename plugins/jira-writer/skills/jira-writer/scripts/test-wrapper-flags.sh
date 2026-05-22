@@ -148,4 +148,34 @@ test_adf_failure_is_hard_error
 test_plain_text_failure_still_mcp_fallback
 test_preflight_validation_blocks_invalid_adf
 
+test_envelope_shape_consistent_for_adf_errors() {
+  setup_mock_curl
+  # update_issue with ADF input → api:error with params.issueIdOrKey
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" update_issue INCORP-1 \
+    '{"description":{"type":"doc","version":1,"content":[]}}' 2>/dev/null || true)
+  echo "$out" | jq -e '.params.issueIdOrKey == "INCORP-1"' >/dev/null \
+    || fail "update_issue api:error envelope should have params.issueIdOrKey: $out"
+  teardown_mock_curl
+  pass "api:error envelopes use params wrapper consistently"
+}
+
+test_shallow_adf_doc_not_treated_as_full_adf() {
+  setup_mock_curl
+  # A malformed ADF doc (.description.type=="doc" but no version/content)
+  # should NOT trigger strict ADF failure path — it's not really ADF.
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" update_issue INCORP-1 \
+    '{"description":{"type":"doc"}}' 2>/dev/null || true)
+  # Should fall back to mcp_fallback (not api:error) because the description
+  # doesn't pass the strict ADF shape check.
+  echo "$out" | jq -e '.api == "mcp_fallback"' >/dev/null \
+    || fail "malformed ADF should fall back to mcp_fallback, got: $out"
+  teardown_mock_curl
+  pass "malformed pseudo-ADF doesn't trigger strict-failure path"
+}
+
+test_envelope_shape_consistent_for_adf_errors
+test_shallow_adf_doc_not_treated_as_full_adf
+
 echo "test-wrapper-flags.sh: all pass"
