@@ -186,15 +186,19 @@ All operations go through `jira-api-wrapper.sh`. The low-level functions in `jir
 
 **jira-api-wrapper.sh** (USE THIS)
 ```bash
-# Create issue - accepts positional args
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY TYPE "Summary" "Description"
+# Create issue - accepts positional args; --desc-file and --markdown convert to ADF automatically
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJ Task "Fix login bug" "Users cannot login"
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue INCORP Story "OAuth support" --desc-file /tmp/spec.md --parent INCORP-172
 
 # Update issue — pass only the field values; the wrapper auto-wraps with {"fields": ...}
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"summary":"New title"}'
 
-# Get issue
+# Get issue (--summary-only returns just the summary field)
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue KEY [FIELDS] [--summary-only]
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123 --summary-only
 
 # Search with JQL
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" search_jql "project = PROJ AND status = Open"
@@ -203,8 +207,14 @@ All operations go through `jira-api-wrapper.sh`. The low-level functions in `jir
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_projects
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue_types PROJECT_KEY
 
-# Add comment
+# Add comment (supports --desc-file and --markdown for rich ADF comments)
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment KEY BODY [--desc-file PATH] [--markdown]
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment PROJ-123 "This is a comment"
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment PROJ-123 "## Update\n- [x] Done" --markdown
+
+# Validate ADF locally without hitting Jira (--bisect finds the first failing block)
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" validate_adf PATH_TO_ADF_JSON [--bisect]
+"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" validate_adf /tmp/my-adf.json --bisect
 
 # Add worklog
 "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_worklog PROJ-123 "2h"
@@ -271,6 +281,8 @@ Every wrapper invocation returns JSON in one of three shapes:
 1. **REST success:** `{"api": "rest", "data": {...}}` — operation succeeded via REST API. `.data` is the Jira API response body.
 
 2. **MCP fallback:** `{"api": "mcp_fallback", "operation": "...", "params": {...}, "rest_error": "...", "note": "..."}` — REST failed (no credentials, network error, or 4xx/5xx). The agent should retry via the corresponding MCP tool with `params`. The optional `.note` field warns when the original input was pre-built ADF that won't render rich through MCP.
+
+**v1.5.0 behavior change:** When the wrapper sends ADF (constructed from markdown or passed in directly) and Jira REST returns a 4xx, the failure now emits `api:"error"` rather than `api:"mcp_fallback"`. MCP cannot retry rich ADF (checkboxes, tables, mark-formatted content) so the prior `mcp_fallback` envelope was misleading. The `api:"error"` envelope includes `rest_error` with the REST `errorMessages` and a `note` clarifying that MCP fallback is not viable. Plain-text input is unchanged — REST failure still emits `mcp_fallback`.
 
 3. **Non-recoverable error:** `{"api": "error", "operation": "...", "params": {...}, "rest_error": "..."}` — operation failed with no MCP fallback available (currently only attachment upload). Report the error to the user; no retry path exists in this script.
 
@@ -373,7 +385,29 @@ ELSE:
     PROCEED to Step 6
 ```
 
-### Step 5a: Build ADF Document (for complex content)
+### Rich content the easy way (recommended path)
+
+For most rich tickets, **don't hand-build ADF**. Pass markdown via `--desc-file` and let the plugin convert:
+
+```bash
+bash jira-api-wrapper.sh create_issue INCORP Story "OAuth support" \
+  --desc-file /tmp/oauth-spec.md \
+  --parent INCORP-172
+```
+
+The wrapper runs `markdown-to-adf.mjs`, validates the output with `adf-validate.mjs`, and POSTs to Jira. If validation fails (mark exclusivity, missing localId, etc.), nothing hits Jira and you get a structured `api:"error"` envelope with the rule that fired and the path to the offending node.
+
+For inline markdown:
+
+```bash
+bash jira-api-wrapper.sh add_comment INCORP-173 "## Update
+
+- [x] Code review complete" --markdown
+```
+
+Use the manual ADF path (below) only when you need a node the converter doesn't support (mediaSingle for attachments, custom marks, mentions). Even then, write your ADF to a file and pre-flight it with `validate_adf` before sending.
+
+### Step 5a: Build ADF Document (manual fallback — see "Rich content the easy way" above for the recommended path)
 
 ```
 CONVERT markdown content to ADF nodes:
@@ -741,6 +775,20 @@ Quick reference for Atlassian Document Format nodes.
 | `full-width` | Full page width |
 | `align-start` | Left-aligned |
 | `align-end` | Right-aligned |
+
+### ADF Gotchas
+
+These trip up most ADF construction. The plugin's `adf-validate.mjs` (called automatically before any ADF send) catches all of them client-side.
+
+**Mark exclusivity.** `code` is exclusive with `strong`, `em`, and `link`. A text node with `marks: [{type:"code"},{type:"strong"}]` is rejected by Jira. When converting markdown like `**\`compile.ts\`**`, the converter drops the `strong` mark and keeps only `code`.
+
+**localId on taskList/taskItem.** Every `taskList` and every `taskItem` requires a unique `localId` (UUID format, e.g. `"a1b2c3d4-e5f6-7890-abcd-ef1234567890"`). The markdown converter generates these automatically; if hand-building ADF, use `uuidgen` or `node -e "console.log(crypto.randomUUID())"`.
+
+**tableCell attrs.** `tableCell` and `tableHeader` nodes must include an `attrs` object even when empty: `{"type":"tableCell","attrs":{},"content":[...]}`. Omitting `attrs` returns `INVALID_INPUT` with no detail.
+
+**204 = success.** PUTs (update) and some DELETEs return HTTP 204 with an empty body. The wrapper emits `{"api":"rest","data":{"success":true}}` on 204.
+
+**Pre-flight your ADF.** When debugging an opaque `INVALID_INPUT`, run `bash jira-api-wrapper.sh validate_adf /tmp/your-adf.json --bisect`. The validator reports the first failing block index and the specific rule violated, without touching Jira.
 
 ## Mermaid Reference
 
