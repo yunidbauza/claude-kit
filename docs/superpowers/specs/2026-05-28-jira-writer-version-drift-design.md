@@ -23,6 +23,8 @@ Version metadata has drifted across the three places that record it:
 | `.claude-plugin/marketplace.json` (plugin entry) | `1.1.0` (stale — not bumped across PRs #1, #2, #4, #5) |
 | Local cache `~/.claude/plugins/cache/claude-kit/jira-writer/` | `1.3.0` only |
 
+This fix ships as a fresh patch release, `1.5.1`, since it is a bug fix.
+
 Because the marketplace registry advertises `1.1.0`, the installer never converges the local cache onto `1.5.0`. Each plugin update creates a new versioned cache directory (`…/<version>/…`) and removes the previous one.
 
 The intermittent failure: when the plugin updates during a live session, `$CLAUDE_PLUGIN_ROOT` was captured pointing at the *old* version directory. Any script invocation that expands that env var then resolves to a directory that no longer exists, producing the raw bash "No such file or directory". A fresh session re-resolves `$CLAUDE_PLUGIN_ROOT`, so the error disappears — until the next update.
@@ -49,7 +51,11 @@ The raw bash error is opaque: neither the user nor Claude can tell from it that 
 
 **Source of truth:** `plugins/jira-writer/.claude-plugin/plugin.json` is canonical. `.claude-plugin/marketplace.json` mirrors its version.
 
-**Change:** Bump the `jira-writer` entry in `.claude-plugin/marketplace.json` from `1.1.0` to `1.5.0`.
+**Change:** Cut a fresh patch release `1.5.1`:
+- Bump `version` in `plugins/jira-writer/.claude-plugin/plugin.json` from `1.5.0` to `1.5.1`.
+- Set the `jira-writer` entry `version` in `.claude-plugin/marketplace.json` to `1.5.1` (from the stale `1.1.0`).
+
+Both files land on `1.5.1`, so the registry and the canonical manifest agree.
 
 **Guard (CI):** Add a `version-sync` job to `.github/workflows/jira-writer-tests.yml`. The job:
 - reads `version` from `plugins/jira-writer/.claude-plugin/plugin.json` (jq),
@@ -92,7 +98,7 @@ cache directory that no longer exists. Restart Claude Code to refresh it.
 ## Verification plan
 
 - **Layer 1:**
-  - After the bump, run the two jq reads locally and confirm both report `1.5.0`.
+  - After the bump, run the two jq reads locally and confirm both report `1.5.1`.
   - Confirm the new CI job passes on the synced tree.
   - Temporarily desync (edit one file), confirm the CI job fails, then revert.
 - **Layer 2:**
@@ -103,7 +109,10 @@ cache directory that no longer exists. Restart Claude Code to refresh it.
 
 ## Files touched
 
-- `.claude-plugin/marketplace.json` — version bump.
+- `plugins/jira-writer/.claude-plugin/plugin.json` — bump to `1.5.1`.
+- `.claude-plugin/marketplace.json` — set to `1.5.1`.
 - `.github/workflows/jira-writer-tests.yml` — add `version-sync` job.
 - `plugins/jira-writer/skills/jira-writer/scripts/jira-api-wrapper.sh` — guarded source.
 - `plugins/jira-writer/skills/jira-writer/SKILL.md` — troubleshooting note.
+- `plugins/jira-writer/CHANGELOG.md` — add a `1.5.1` entry describing the version-sync fix, wrapper diagnostic, and troubleshooting note.
+- `README.md` — update the line referencing "v1.5.0 release notes" (line ~208) to `1.5.1`.
