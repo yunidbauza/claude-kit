@@ -35,6 +35,9 @@ jobs:
       - name: Run existing wrapper-dispatch tests
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: bash test-wrapper-dispatch.sh
+      - name: Run wrapper preflight test
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: bash test-wrapper-preflight.sh
       - name: Run check-prerequisites
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: bash check-prerequisites.sh | jq -e '.node.available == true' >/dev/null
