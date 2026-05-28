@@ -205,7 +205,7 @@ The plugin uses **REST API as the primary method**. MCP is a fallback only for p
 ./scripts/jira-mermaid-upload.sh PROJ-123 diagram.mmd
 ```
 
-See [plugins/jira-writer/CHANGELOG.md](plugins/jira-writer/CHANGELOG.md) for v1.5.0 release notes.
+See [plugins/jira-writer/CHANGELOG.md](plugins/jira-writer/CHANGELOG.md) for v1.5.1 release notes.
 
 ## Troubleshooting
 

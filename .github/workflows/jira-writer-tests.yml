@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - 'plugins/jira-writer/**'
+      - '.claude-plugin/marketplace.json'
       - '.github/workflows/jira-writer-tests.yml'
   pull_request:
     paths:
       - 'plugins/jira-writer/**'
+      - '.claude-plugin/marketplace.json'
       - '.github/workflows/jira-writer-tests.yml'
   workflow_dispatch:
 
@@ -33,6 +35,26 @@ jobs:
       - name: Run existing wrapper-dispatch tests
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: bash test-wrapper-dispatch.sh
+      - name: Run wrapper preflight test
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: bash test-wrapper-preflight.sh
       - name: Run check-prerequisites
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: bash check-prerequisites.sh | jq -e '.node.available == true' >/dev/null
+
+  version-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Verify plugin.json and marketplace.json versions match
+        run: |
+          plugin_version=$(jq -r '.version' plugins/jira-writer/.claude-plugin/plugin.json)
+          marketplace_version=$(jq -r '.plugins[] | select(.name == "jira-writer") | .version' .claude-plugin/marketplace.json)
+          echo "plugin.json:      $plugin_version"
+          echo "marketplace.json: $marketplace_version"
+          if [[ "$plugin_version" != "$marketplace_version" ]]; then
+            echo "::error::jira-writer version mismatch: plugin.json=$plugin_version marketplace.json=$marketplace_version"
+            exit 1
+          fi

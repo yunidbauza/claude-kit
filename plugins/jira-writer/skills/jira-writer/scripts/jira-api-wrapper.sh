@@ -35,7 +35,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Source the REST API functions
+# Source the REST API functions. If the sibling file is missing, the plugin
+# likely updated mid-session and $CLAUDE_PLUGIN_ROOT points at a removed cache
+# directory — fail loudly with guidance instead of a raw bash error.
+if [[ ! -f "$SCRIPT_DIR/jira-rest-api.sh" ]]; then
+    echo "[ERROR] jira-writer scripts missing at: $SCRIPT_DIR" >&2
+    echo "[ERROR] The plugin likely updated mid-session — restart Claude Code to refresh CLAUDE_PLUGIN_ROOT." >&2
+    exit 127
+fi
 source "$SCRIPT_DIR/jira-rest-api.sh"
 
 # Colors for output (only when stderr is a terminal)

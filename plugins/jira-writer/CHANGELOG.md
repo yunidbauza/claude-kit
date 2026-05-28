@@ -1,5 +1,15 @@
 # Changelog — jira-writer
 
+## 1.5.1 — 2026-05-28
+
+### Fixed
+- Synced `marketplace.json` with `plugin.json` so installs converge on the latest release (the registry was stuck advertising `1.1.0`).
+- `jira-api-wrapper.sh` now prints a clear diagnostic and exits 127 when its sibling `jira-rest-api.sh` is missing, instead of a raw "No such file or directory". This occurs when the plugin updates mid-session and `$CLAUDE_PLUGIN_ROOT` points at a removed cache directory — restart Claude Code to recover.
+
+### Added
+- CI `version-sync` job that fails when `plugin.json` and `marketplace.json` versions disagree.
+- SKILL.md troubleshooting note explaining the mid-session-update failure and the restart fix.
+
 ## 1.5.0 — 2026-05-22
 
 Resolves all items in `jira-writer-improvements.md`.
