@@ -182,6 +182,12 @@ The following scripts automate operations (located in `scripts/` directory):
 
 All operations go through `jira-api-wrapper.sh`. The low-level functions in `jira-rest-api.sh` are sourced by the wrapper and are not invoked directly.
 
+#### Troubleshooting
+
+**"jira-writer scripts missing" or a raw "No such file or directory" for a script path**
+The plugin updated during this session, so `$CLAUDE_PLUGIN_ROOT` points at a cache
+directory that no longer exists. Restart Claude Code to refresh it.
+
 #### Primary Scripts
 
 **jira-api-wrapper.sh** (USE THIS)
