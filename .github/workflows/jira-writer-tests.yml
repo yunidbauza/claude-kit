@@ -38,6 +38,9 @@ jobs:
       - name: Run wrapper preflight test
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: bash test-wrapper-preflight.sh
+      - name: Run bin launcher test
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: bash test-bin-launcher.sh
       - name: Run check-prerequisites
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: bash check-prerequisites.sh | jq -e '.node.available == true' >/dev/null
