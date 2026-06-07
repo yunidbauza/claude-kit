@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# jira-writer — PATH entrypoint for the jira-writer plugin.
+#
+# WHY THIS EXISTS
+#   Claude Code adds every enabled plugin's <plugin-root>/bin directory to the
+#   Bash tool's PATH, so this script is invokable by bare name (`jira-writer`)
+#   from any Bash tool call. It deliberately does NOT depend on
+#   $CLAUDE_PLUGIN_ROOT: that variable is exported only to hook and MCP/LSP
+#   subprocesses, never to the interactive Bash tool shell. SKILL.md therefore
+#   instructs the model to call `jira-writer <op>` rather than
+#   "$CLAUDE_PLUGIN_ROOT/skills/.../jira-api-wrapper.sh" (which expands to an
+#   empty path and fails every time).
+#
+# WHAT IT DOES
+#   Resolves its own location (works regardless of cwd because PATH lookup
+#   yields an absolute BASH_SOURCE[0]) and execs the real implementation living
+#   in ../skills/jira-writer/scripts/. By default it forwards to
+#   jira-api-wrapper.sh; a small set of reserved subcommands route to the
+#   diagnostic / mermaid helpers.
+#
+# USAGE
+#   jira-writer <wrapper-op> [args...]      # default → jira-api-wrapper.sh
+#   jira-writer doctor                      # → check-prerequisites.sh
+#   jira-writer connection-test             # → test-jira-connection.sh
+#   jira-writer mermaid <key> <file> [name] # → jira-mermaid-upload.sh
+#   jira-writer mermaid-batch <key> <json>  # → jira-mermaid-batch-upload.sh
+#
+#   The reserved words above are chosen so they never collide with a
+#   jira-api-wrapper.sh operation or alias. Everything else (get_issue,
+#   create_issue, search_jql, …) is passed straight through to the wrapper.
+#
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPTS_DIR="$(cd "$HERE/.." && pwd)/skills/jira-writer/scripts"
+
+# If the implementation directory is gone, the plugin likely updated mid-session
+# and this bin/ entry points at a removed cache tree. Fail loudly with guidance
+# instead of a raw "No such file or directory" (matches jira-api-wrapper.sh).
+if [[ ! -d "$SCRIPTS_DIR" ]]; then
+    echo "[ERROR] jira-writer scripts not found at: $SCRIPTS_DIR" >&2
+    echo "[ERROR] The plugin likely updated mid-session — restart Claude Code to refresh PATH." >&2
+    exit 127
+fi
+
+case "${1:-}" in
+    doctor)
+        shift
+        exec "$SCRIPTS_DIR/check-prerequisites.sh" "$@"
+        ;;
+    connection-test)
+        shift
+        exec "$SCRIPTS_DIR/test-jira-connection.sh" "$@"
+        ;;
+    mermaid)
+        shift
+        exec "$SCRIPTS_DIR/jira-mermaid-upload.sh" "$@"
+        ;;
+    mermaid-batch)
+        shift
+        exec "$SCRIPTS_DIR/jira-mermaid-batch-upload.sh" "$@"
+        ;;
+    *)
+        # Default: forward everything (including no args) to the wrapper, which
+        # owns op normalization, usage output, and unknown-op suggestions.
+        exec "$SCRIPTS_DIR/jira-api-wrapper.sh" "$@"
+        ;;
+esac

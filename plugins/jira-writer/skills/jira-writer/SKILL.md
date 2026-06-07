@@ -178,63 +178,69 @@ Run: npm install -g @mermaid-js/mermaid-cli
 
 The following scripts automate operations (located in `scripts/` directory):
 
-#### Script Selection Guide
+#### How to invoke (IMPORTANT)
 
-All operations go through `jira-api-wrapper.sh`. The low-level functions in `jira-rest-api.sh` are sourced by the wrapper and are not invoked directly.
+Call the plugin by its **bare command name `jira-writer`** — e.g. `jira-writer get_issue PROJ-123`. The plugin ships a `bin/jira-writer` launcher that Claude Code automatically adds to the Bash tool's `PATH`, so it resolves from any working directory.
+
+**Do NOT prefix the command with `$CLAUDE_PLUGIN_ROOT` or an absolute script path.** `$CLAUDE_PLUGIN_ROOT` is exported only to hook and MCP subprocesses, never to the Bash tool shell — using it expands to an empty path and the call fails every time. The `bin/jira-writer` launcher exists precisely so you never need that variable.
+
+All operations go through the `jira-writer` launcher, which forwards to `jira-api-wrapper.sh`. The low-level functions in `jira-rest-api.sh` are sourced by the wrapper and are not invoked directly. The diagnostic and mermaid helpers are reached via the reserved subcommands `jira-writer doctor`, `jira-writer connection-test`, `jira-writer mermaid`, and `jira-writer mermaid-batch`.
 
 #### Troubleshooting
 
-**"jira-writer scripts missing" or a raw "No such file or directory" for a script path**
-The plugin updated during this session, so `$CLAUDE_PLUGIN_ROOT` points at a cache
-directory that no longer exists. Restart Claude Code to refresh it.
+**`jira-writer: command not found`, "jira-writer scripts missing", or a raw "No such file or directory"**
+The plugin updated during this session, so the cached `PATH` entry points at a
+directory that no longer exists. **Restart Claude Code** to refresh it. As a
+one-off fallback within the current session, the scripts live under this skill's
+own base directory — run `"<skill base dir>/scripts/jira-api-wrapper.sh" <op>`
+(the base directory is provided to you when this skill loads).
 
 #### Primary Scripts
 
 **jira-api-wrapper.sh** (USE THIS)
 ```bash
 # Create issue - accepts positional args; --desc-file and --markdown convert to ADF automatically
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJ Task "Fix login bug" "Users cannot login"
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue INCORP Story "OAuth support" --desc-file /tmp/spec.md --parent INCORP-172
+jira-writer create_issue PROJECT_KEY TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]
+jira-writer create_issue PROJ Task "Fix login bug" "Users cannot login"
+jira-writer create_issue INCORP Story "OAuth support" --desc-file /tmp/spec.md --parent INCORP-172
 
 # Update issue — pass only the field values; the wrapper auto-wraps with {"fields": ...}
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"summary":"New title"}'
+jira-writer update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]
+jira-writer update_issue PROJ-123 '{"summary":"New title"}'
 
 # Get issue (--summary-only returns just the summary field)
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue KEY [FIELDS] [--summary-only]
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123 --summary-only
+jira-writer get_issue KEY [FIELDS] [--summary-only]
+jira-writer get_issue PROJ-123
+jira-writer get_issue PROJ-123 --summary-only
 
 # Search with JQL
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" search_jql "project = PROJ AND status = Open"
+jira-writer search_jql "project = PROJ AND status = Open"
 
 # Get projects and issue types
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_projects
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue_types PROJECT_KEY
+jira-writer get_projects
+jira-writer get_issue_types PROJECT_KEY
 
 # Add comment (supports --desc-file and --markdown for rich ADF comments)
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment KEY BODY [--desc-file PATH] [--markdown]
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment PROJ-123 "This is a comment"
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_comment PROJ-123 "## Update\n- [x] Done" --markdown
+jira-writer add_comment KEY BODY [--desc-file PATH] [--markdown]
+jira-writer add_comment PROJ-123 "This is a comment"
+jira-writer add_comment PROJ-123 "## Update\n- [x] Done" --markdown
 
 # Validate ADF locally without hitting Jira (--bisect finds the first failing block)
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" validate_adf PATH_TO_ADF_JSON [--bisect]
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" validate_adf /tmp/my-adf.json --bisect
+jira-writer validate_adf PATH_TO_ADF_JSON [--bisect]
+jira-writer validate_adf /tmp/my-adf.json --bisect
 
 # Add worklog
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" add_worklog PROJ-123 "2h"
+jira-writer add_worklog PROJ-123 "2h"
 
 # Transitions
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_transitions PROJ-123
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" transition_issue PROJ-123 TRANSITION_ID
+jira-writer get_transitions PROJ-123
+jira-writer transition_issue PROJ-123 TRANSITION_ID
 
 # Upload attachment
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" upload_attachment PROJ-123 /path/to/file.png
+jira-writer upload_attachment PROJ-123 /path/to/file.png
 
 # Look up a user by name or email (returns accountId)
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
-    lookup_user "alice@example.com"
+jira-writer lookup_user "alice@example.com"
 ```
 
 **Aliases:** The wrapper accepts the canonical op names listed above plus common variants — verb-only forms (`issue`, `create`, `comment`, `search`, `projects`), camelCase (`getIssue`), and `jira_`-prefixed names (`jira_get_issue`). Unknown ops exit 2 with a "Did you mean: …" suggestion.
@@ -243,13 +249,13 @@ directory that no longer exists. Restart Claude Code to refresh it.
 
 **test-jira-connection.sh**
 ```bash
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/test-jira-connection.sh"
+jira-writer connection-test
 # Tests API connectivity and returns recommendation
 ```
 
 **check-prerequisites.sh**
 ```bash
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/check-prerequisites.sh"
+jira-writer doctor
 # Returns JSON with status of all dependencies
 ```
 
@@ -257,14 +263,14 @@ directory that no longer exists. Restart Claude Code to refresh it.
 
 **jira-mermaid-upload.sh**
 ```bash
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-mermaid-upload.sh" <issue_key> <mermaid_file_or_code> [filename]
+jira-writer mermaid <issue_key> <mermaid_file_or_code> [filename]
 # Converts mermaid to PNG and uploads to Jira
 # Returns: { "attachment_id": "...", "content_url": "...", "filename": "..." }
 ```
 
 **jira-mermaid-batch-upload.sh**
 ```bash
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-mermaid-batch-upload.sh" <issue_key> '<json_array_of_diagrams>'
+jira-writer mermaid-batch <issue_key> '<json_array_of_diagrams>'
 # Processes multiple diagrams in one call
 ```
 
@@ -276,7 +282,7 @@ When creating new issues:
 
 Check available issue types for a project:
 ```bash
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue_types PROJECT_KEY
+jira-writer get_issue_types PROJECT_KEY
 # Or via MCP: mcp__atlassian__getJiraProjectIssueTypesMetadata with projectIdOrKey
 ```
 
@@ -352,7 +358,7 @@ For each mermaid block:
         SKIP this diagram
 
 4d. UPLOAD attachment (REST API required)
-    Use: "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" upload_attachment $ISSUE_KEY $TEMP_DIR/diagram-N.png
+    Use: jira-writer upload_attachment $ISSUE_KEY $TEMP_DIR/diagram-N.png
     Or directly:
     POST to: https://$JIRA_DOMAIN/rest/api/3/issue/$ISSUE_KEY/attachments
     Headers:
@@ -396,7 +402,7 @@ ELSE:
 For most rich tickets, **don't hand-build ADF**. Pass markdown via `--desc-file` and let the plugin convert:
 
 ```bash
-bash jira-api-wrapper.sh create_issue INCORP Story "OAuth support" \
+jira-writer create_issue INCORP Story "OAuth support" \
   --desc-file /tmp/oauth-spec.md \
   --parent INCORP-172
 ```
@@ -406,7 +412,7 @@ The wrapper runs `markdown-to-adf.mjs`, validates the output with `adf-validate.
 For inline markdown:
 
 ```bash
-bash jira-api-wrapper.sh add_comment INCORP-173 "## Update
+jira-writer add_comment INCORP-173 "## Update
 
 - [x] Code review complete" --markdown
 ```
@@ -461,7 +467,7 @@ Choose API based on content complexity (determined in Step 5):
 **For new issues:**
 ```bash
 # Try REST API first
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT_KEY "Task" "Summary" "Description"
+jira-writer create_issue PROJECT_KEY "Task" "Summary" "Description"
 
 # If response indicates MCP fallback needed:
 # Use mcp__atlassian__createJiraIssue with:
@@ -482,7 +488,7 @@ Issue type mapping:
 **For existing issues:**
 ```bash
 # Try REST API first — pass only field values; wrapper auto-wraps with {"fields": ...}
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" update_issue PROJ-123 '{"summary": "New title"}'
+jira-writer update_issue PROJ-123 '{"summary": "New title"}'
 
 # If response indicates MCP fallback needed:
 # Use mcp__atlassian__editJiraIssue with:
@@ -498,7 +504,7 @@ Content with checkboxes, images, or mermaid diagrams requires REST API.
 ```bash
 # Build the ADF document in-context (per Step 5a), then pass it as the
 # fourth argument to create_issue. The wrapper auto-detects pre-built ADF.
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
+jira-writer \
     create_issue PROJECT_KEY "Task" "Summary" '<ADF_DOCUMENT_JSON>'
 ```
 
@@ -556,11 +562,11 @@ detection: a JSON object with `type:"doc"`, numeric `version`, and array
 
 ```bash
 # Simple text comment (unchanged):
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
+jira-writer \
     add_comment PROJ-123 "Quick note."
 
 # Rich ADF comment (headings, lists, code blocks, checkboxes):
-"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" \
+jira-writer \
     add_comment PROJ-123 '{
         "type": "doc",
         "version": 1,
@@ -794,7 +800,7 @@ These trip up most ADF construction. The plugin's `adf-validate.mjs` (called aut
 
 **204 = success.** PUTs (update) and some DELETEs return HTTP 204 with an empty body. The wrapper emits `{"api":"rest","data":{"success":true}}` on 204.
 
-**Pre-flight your ADF.** When debugging an opaque `INVALID_INPUT`, run `bash jira-api-wrapper.sh validate_adf /tmp/your-adf.json --bisect`. The validator reports the first failing block index and the specific rule violated, without touching Jira.
+**Pre-flight your ADF.** When debugging an opaque `INVALID_INPUT`, run `jira-writer validate_adf /tmp/your-adf.json --bisect`. The validator reports the first failing block index and the specific rule violated, without touching Jira.
 
 ## Mermaid Reference
 
@@ -1063,7 +1069,7 @@ Common usage patterns for this skill.
 1. No complex content detected -> REST API with MCP fallback available
 2. Try REST API first:
    ```bash
-   "$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" create_issue PROJECT "Task" "Refactor database connection pool" "Description..."
+   jira-writer create_issue PROJECT "Task" "Refactor database connection pool" "Description..."
    ```
 3. If REST fails, fall back to `mcp__atlassian__createJiraIssue` with:
    - projectKey
@@ -1079,7 +1085,7 @@ Common usage patterns for this skill.
 > "Show me the details of PROJ-123"
 
 **Skill execution:**
-1. Run: `"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_issue PROJ-123`
+1. Run: `jira-writer get_issue PROJ-123`
 2. Parse response and present summary, status, assignee, description, etc.
 
 ---
@@ -1091,7 +1097,7 @@ Common usage patterns for this skill.
 
 **Skill execution:**
 1. Build JQL: `project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()`
-2. Run: `"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" search_jql "project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()"`
+2. Run: `jira-writer search_jql "project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()"`
 3. Present results in a readable format
 
 ---
@@ -1102,5 +1108,5 @@ Common usage patterns for this skill.
 > "What Jira projects do I have access to?"
 
 **Skill execution:**
-1. Run: `"$CLAUDE_PLUGIN_ROOT/skills/jira-writer/scripts/jira-api-wrapper.sh" get_projects`
+1. Run: `jira-writer get_projects`
 2. Present project list with keys and names
