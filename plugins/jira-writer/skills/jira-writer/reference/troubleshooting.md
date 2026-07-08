@@ -1,0 +1,90 @@
+# Troubleshooting & Known Issues
+
+## Output Envelope Shapes
+
+Every wrapper invocation returns JSON in one of three shapes:
+
+1. **REST success:** `{"api": "rest", "data": {...}}` — succeeded via REST. `.data` is the Jira response body.
+2. **MCP fallback:** `{"api": "mcp_fallback", "operation": "...", "params": {...}, "rest_error": "...", "note": "..."}` — REST failed (no creds, network, or 4xx/5xx). Retry via the corresponding MCP tool with `params`. `.note` warns when pre-built ADF won't render rich through MCP.
+3. **Non-recoverable error:** `{"api": "error", "operation": "...", "params": {...}, "rest_error": "..."}` — failed, no MCP fallback. Report to user; no retry path.
+
+**v1.5.0 behavior change:** When the wrapper sends ADF (from markdown or passed in
+directly) and Jira REST returns a 4xx, the failure emits `api:"error"` rather than
+`api:"mcp_fallback"` — MCP cannot retry rich ADF (checkboxes, tables, marks). The
+`api:"error"` envelope includes `rest_error` (the REST `errorMessages`) and a
+clarifying `note`. Plain-text input is unchanged — REST failure still emits
+`mcp_fallback`. The script header (`jira-api-wrapper.sh:14-27`) is authoritative.
+
+## Graceful Degradation
+
+| Missing | Behavior |
+|---------|----------|
+| REST API credentials | Fall back to MCP; if MCP unavailable, stop with setup instructions |
+| MCP | REST API handles everything (no impact if REST configured) |
+| Both REST and MCP | Skill cannot function; stop with setup instructions |
+| JIRA_API_KEY only | Text ops via MCP; diagrams/checkboxes skipped with warning |
+| mmdc | Diagrams skipped with warning; offer installation |
+
+## Error Response Table
+
+| Stage | Error | Action |
+|-------|-------|--------|
+| Prerequisites | REST unavailable, MCP unavailable | STOP; provide setup instructions |
+| Prerequisites | REST auth failed | WARN; try MCP fallback |
+| Prerequisites | JIRA_DOMAIN missing | ASK user to provide |
+| Prerequisites | mmdc missing | OFFER install; if declined, skip diagrams |
+| Mermaid validation | Syntax error | REPORT details; skip diagram, continue others |
+| PNG conversion | mmdc fails | REPORT error; skip diagram |
+| Attachment upload | 401/403 | STOP; report auth error, check API key |
+| Attachment upload | 404 | STOP; issue doesn't exist |
+| Attachment upload | Other error | RETRY once; if fails, skip with warning |
+| Description update | REST error | TRY MCP fallback (simple content); ROLLBACK attachments; report |
+| Section detection | Section not found | ASK user for clarification |
+| Wrapper exit 2 | Unknown operation | Suggestion shown; check op name or run with no args |
+
+## Rollback Procedure
+
+When a description update fails after attachments were uploaded:
+```
+FOR each uploaded attachment_id:
+    curl -X DELETE \
+      -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64)" \
+      "https://$JIRA_DOMAIN/rest/api/3/attachment/$attachment_id"
+REPORT: "Failed to update the issue description. I've cleaned up the uploaded
+         diagram attachments to avoid orphaned files. Error: [details]"
+```
+
+## Partial Success (Batch Diagrams)
+
+```
+CONTINUE processing remaining diagrams
+REPORT at end: "Embedded 2 of 3 diagrams successfully.
+                Diagram 2 skipped due to syntax error: [details]"
+```
+
+## `jira-writer: command not found` / "scripts missing" / raw "No such file or directory"
+
+The plugin updated during this session, so the cached `PATH` entry points at a
+directory that no longer exists. **Restart Claude Code** to refresh it. One-off
+fallback within the session: the scripts live under this skill's base directory —
+run `"<skill base dir>/scripts/jira-api-wrapper.sh" <op>`. Do **not** prefix with
+`$CLAUDE_PLUGIN_ROOT`: it is exported only to hook/MCP subprocesses, never to the
+Bash tool shell, so it expands to empty and fails.
+
+## Known Issues & Gotchas
+
+1. **JIRA_API_KEY format** — store as plain `email:api_token`; scripts base64-encode
+   internally. Wrong: `export JIRA_API_KEY=$(echo -n "email:token" | base64)`.
+   Correct: `export JIRA_API_KEY="email:token"`.
+2. **ADF Media nodes** — use `type: "external"` with the attachment content URL, not
+   `type: "file"` with an ID. URL: `https://$JIRA_DOMAIN/rest/api/3/attachment/content/<id>`.
+3. **MCP cannot handle complex ADF** — checkboxes become escaped text (not interactive
+   taskList); media isn't supported. Use REST for checkboxes/images/diagrams.
+4. **MCP cannot update description with raw ADF** — `editJiraIssue` treats input as
+   markdown. For ADF with media/checkboxes, PUT via REST directly.
+5. **Checkbox ADF requires unique localIds** — UUID per `taskList` and `taskItem`.
+6. **Attachment upload requires REST API** — MCP has no file upload; use multipart.
+7. **Issue not found (404)** — usually wrong domain or permissions. Verify JIRA_DOMAIN
+   and token scope.
+8. **REST vs MCP fallback** — REST preferred; MCP fallback is automatic for simple
+   content only. Complex content has no MCP fallback.
