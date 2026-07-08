@@ -1,5 +1,20 @@
 # Changelog — jira-writer
 
+## 1.6.0 — 2026-07-07
+
+### Changed
+- **SKILL.md rewritten as a lean dispatcher (progressive disclosure).** The skill body is auto-injected into every session, so its size is a permanent context tax. Trimmed it from ~1112 lines / ~7k tokens to **124 lines / ~1.4k tokens (~80% reduction)** while keeping everything needed on a normal invocation: prerequisites, the REST-first/MCP-fallback rule, the bare-`jira-writer` invocation warning, the full command cheat-sheet, the `--desc-file --markdown` recommended path, the response-envelope quick reference, and a when-to-read-what table.
+
+### Added
+- `reference/` directory holding the detail that used to live inline, loaded on demand only when a task needs it:
+  - `reference/workflow.md` — full Step 1–7 flow (mermaid processing, complexity detection, append/replace/insert/prepend update modes, rollback).
+  - `reference/adf.md` — ADF node catalog, inline marks, media layouts, gotchas, rich-comment example.
+  - `reference/mermaid.md` — diagram types, conversion options, filename/validation conventions, upload helpers.
+  - `reference/troubleshooting.md` — envelope shapes, graceful degradation, error table, rollback, known issues.
+  - `reference/examples.md` — the 10 worked request→execution walkthroughs.
+
+No behavioral change: same launcher, same ops, same flags. Documentation reorganization only.
+
 ## 1.5.2 — 2026-06-06
 
 ### Fixed
