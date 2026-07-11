@@ -1,7 +1,7 @@
 ---
 name: jira-writer
 description: Read, search, create, and update Jira Cloud tickets — fetch issue details, search with JQL, list projects, look up users, and write rich content with automatic Mermaid diagram embedding
-model: claude-sonnet-4-6
+model: claude-sonnet-5
 ---
 
 # Jira Writer Skill
@@ -66,6 +66,8 @@ jira-writer create_issue INCORP Story "OAuth support" --desc-file /tmp/spec.md -
 # Update (pass only field values; wrapper wraps with {"fields": ...})
 jira-writer update_issue PROJ-123 '{"summary":"New title"}'
 jira-writer update_issue PROJ-123 FIELDS_JSON --desc-file PATH --markdown
+# FIELDS_JSON + --desc-file merge in ONE call: rename + rewrite body together
+jira-writer update_issue PROJ-123 '{"summary":"New title"}' --desc-file /tmp/body.md
 
 # Comment (‑‑markdown / ‑‑desc-file for rich ADF comments)
 jira-writer add_comment PROJ-123 "Quick note."

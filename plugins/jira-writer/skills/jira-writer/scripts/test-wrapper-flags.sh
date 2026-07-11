@@ -91,6 +91,47 @@ test_add_comment_desc_file() {
 }
 test_add_comment_desc_file
 
+test_update_merges_fields_json_with_desc_file() {
+  # Regression: update_issue must merge the positional FIELDS_JSON (e.g. a
+  # summary rename) with the --desc-file body in a SINGLE call instead of
+  # dropping the JSON. Uses the no-creds path so the mcp_fallback envelope
+  # echoes the fields payload we can assert on.
+  local tmp
+  tmp=$(mktemp --suffix=.md 2>/dev/null || mktemp -t mdXXXX).md
+  printf '# New body\n\nUpdated description paragraph.\n' > "$tmp"
+  local out
+  out=$(env -u JIRA_API_KEY -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
+    update_issue INCORP-1 '{"summary":"New title"}' --desc-file "$tmp" 2>/dev/null || true)
+  echo "$out" | jq -e '.api == "mcp_fallback"' >/dev/null \
+    || fail "expected mcp_fallback without creds, got: $out"
+  echo "$out" | jq -e '.params.fields.summary == "New title"' >/dev/null \
+    || fail "summary from FIELDS_JSON must survive alongside --desc-file: $out"
+  echo "$out" | jq -e '.params.fields.description.type == "doc"' >/dev/null \
+    || fail "description ADF from --desc-file missing: $out"
+  echo "$out" | jq -e '.params.fields.description.content[0].type == "heading"' >/dev/null \
+    || fail "desc-file body should be markdown-converted ADF: $out"
+  rm -f "$tmp"
+  pass "update_issue merges FIELDS_JSON summary with --desc-file body"
+}
+test_update_merges_fields_json_with_desc_file
+
+test_update_desc_file_only_still_works() {
+  # No positional FIELDS_JSON: --desc-file alone updates just the description.
+  local tmp
+  tmp=$(mktemp --suffix=.md 2>/dev/null || mktemp -t mdXXXX).md
+  printf 'plain body line\n' > "$tmp"
+  local out
+  out=$(env -u JIRA_API_KEY -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
+    update_issue INCORP-1 --desc-file "$tmp" 2>/dev/null || true)
+  echo "$out" | jq -e '.api == "mcp_fallback" and .params.fields.description.type == "doc"' >/dev/null \
+    || fail "desc-file only should still update description: $out"
+  echo "$out" | jq -e '.params.fields | has("summary") | not' >/dev/null \
+    || fail "desc-file only must not invent a summary field: $out"
+  rm -f "$tmp"
+  pass "update_issue --desc-file alone updates description only"
+}
+test_update_desc_file_only_still_works
+
 # Mock curl by prepending a temp dir to PATH that contains a fake curl.
 setup_mock_curl() {
   MOCK_BIN=$(mktemp -d)

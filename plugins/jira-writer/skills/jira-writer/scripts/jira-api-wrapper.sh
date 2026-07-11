@@ -1113,14 +1113,41 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
             _df="$(_flag_value desc-file)"; _md="0"
             _has_bool markdown && _md="1"
-            if [[ -n "$_df" || "$_md" == "1" ]]; then
+            if [[ -n "$_df" ]]; then
+                # --desc-file: the description body comes from the file. The
+                # positional FIELDS_JSON ($2), when supplied, carries any OTHER
+                # fields (e.g. a summary rename) and is MERGED with the resolved
+                # description — so "rename + rewrite body" is a single call
+                # instead of two. The file body wins on the .description key.
                 if [[ $# -lt 1 ]]; then
                     echo "Error: missing required arguments for update_issue" >&2
                     echo "Usage: $(_usage_for_op update_issue)" >&2
                     exit 1
                 fi
                 _key="$1"
-                _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
+                _adf=$(_resolve_content_input "" "$_df" "0") || {
+                    jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+                    exit 1
+                }
+                _base="{}"
+                if [[ -n "${2:-}" ]]; then
+                    if printf '%s' "$2" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                        _base="$2"
+                    else
+                        log_warn "update_issue: positional FIELDS_JSON is not a JSON object; ignoring: $2"
+                    fi
+                fi
+                _fields=$(jq -n --argjson base "$_base" --argjson desc "$_adf" '$base + {description: $desc}')
+                op_update_issue "$_key" "$_fields" "1"
+            elif [[ "$_md" == "1" ]]; then
+                # --markdown: the positional body ($2) is markdown → description ADF.
+                if [[ $# -lt 1 ]]; then
+                    echo "Error: missing required arguments for update_issue" >&2
+                    echo "Usage: $(_usage_for_op update_issue)" >&2
+                    exit 1
+                fi
+                _key="$1"
+                _adf=$(_resolve_content_input "${2:-}" "" "1") || {
                     jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
                     exit 1
                 }
