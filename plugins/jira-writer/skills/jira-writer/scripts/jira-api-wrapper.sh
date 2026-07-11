@@ -1114,17 +1114,45 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             _df="$(_flag_value desc-file)"; _md="0"
             _has_bool markdown && _md="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
+                # Rich-content path: KEY is required; the description body is
+                # resolved from --desc-file or --markdown and the update is sent
+                # as ADF (is_adf=1). Shared guard/key/dispatch live here; the two
+                # branches below only differ in how the body and fields are built.
                 if [[ $# -lt 1 ]]; then
                     echo "Error: missing required arguments for update_issue" >&2
                     echo "Usage: $(_usage_for_op update_issue)" >&2
                     exit 1
                 fi
                 _key="$1"
-                _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
-                    jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
-                    exit 1
-                }
-                _fields=$(jq -n --argjson desc "$_adf" '{description: $desc}')
+                if [[ -n "$_df" ]]; then
+                    # --desc-file: the description body comes from the file. The
+                    # positional FIELDS_JSON ($2), when supplied, carries any
+                    # OTHER fields (e.g. a summary rename) and is MERGED with the
+                    # resolved description — so "rename + rewrite body" is a
+                    # single call instead of two. The file body wins on the
+                    # .description key. (--desc-file takes precedence over
+                    # --markdown: the file is markdown-converted regardless.)
+                    _adf=$(_resolve_content_input "" "$_df" "0") || {
+                        jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+                        exit 1
+                    }
+                    _base="{}"
+                    if [[ -n "${2:-}" ]]; then
+                        if printf '%s' "$2" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                            _base="$2"
+                        else
+                            log_warn "update_issue: positional FIELDS_JSON is not a JSON object; ignoring: $2"
+                        fi
+                    fi
+                    _fields=$(jq -n --argjson base "$_base" --argjson desc "$_adf" '$base + {description: $desc}')
+                else
+                    # --markdown only: the positional body ($2) is markdown → description ADF.
+                    _adf=$(_resolve_content_input "${2:-}" "" "1") || {
+                        jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+                        exit 1
+                    }
+                    _fields=$(jq -n --argjson desc "$_adf" '{description: $desc}')
+                fi
                 op_update_issue "$_key" "$_fields" "1"
             else
                 if [[ $# -lt 2 ]]; then

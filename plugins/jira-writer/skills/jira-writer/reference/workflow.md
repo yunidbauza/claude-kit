@@ -174,6 +174,10 @@ spike→"Spike", epic→"Epic", subtask→"Subtask".
 ```bash
 jira-writer update_issue PROJ-123 '{"summary": "New title"}'
 # If MCP fallback: mcp__atlassian__editJiraIssue with description (markdown)
+
+# Rename AND rewrite the body in a single call: the FIELDS_JSON is merged with
+# the --desc-file body (file wins on the .description key). No two-call dance.
+jira-writer update_issue PROJ-123 '{"summary": "New title"}' --desc-file /tmp/body.md
 ```
 
 ### Path B: Complex Content (REST API only)

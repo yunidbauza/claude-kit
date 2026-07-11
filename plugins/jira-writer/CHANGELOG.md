@@ -1,5 +1,16 @@
 # Changelog — jira-writer
 
+## 1.6.1 — 2026-07-10
+
+### Fixed
+- **`update_issue` no longer drops the positional `FIELDS_JSON` when `--desc-file` (or `--markdown`) is also passed.** Previously the launcher built the update payload as `{description: <body>}` only, silently discarding any other fields (most commonly a `summary` rename) — so "rename + rewrite body" required two separate calls. The dispatcher now **merges** the positional `FIELDS_JSON` with the resolved description body (`$FIELDS_JSON + {description: ...}`, so the file body wins on the `.description` key) and sends a single REST/MCP update. A non-object positional is ignored with a `[WARN]` instead of corrupting the payload. This matches the `update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]` signature already documented in SKILL.md.
+
+### Added
+- `test-wrapper-flags.sh`: two regression tests — `FIELDS_JSON` summary survives alongside a `--desc-file` body in one call, and `--desc-file` alone still updates the description without inventing a `summary` field.
+
+### Changed
+- SKILL.md frontmatter `model` bumped `claude-sonnet-4-6` → `claude-sonnet-5`.
+
 ## 1.6.0 — 2026-07-07
 
 ### Changed
