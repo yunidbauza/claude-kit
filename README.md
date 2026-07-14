@@ -246,3 +246,12 @@ See [plugins/jira-writer/CHANGELOG.md](plugins/jira-writer/CHANGELOG.md) for v1.
 ## License
 
 MIT
+
+---
+
+## Also in this kit
+
+- **[workstream](plugins/workstream/README.md)** — Jira-ticket-to-merge workflow
+  (`/workstream:work-on`, `/workstream:ship`, `/workstream:review-pr-findings`,
+  `/workstream:merge-pr`, `/workstream:spec-deviation`). Depends on jira-writer
+  for all Jira access. Install with `/plugin install workstream`.

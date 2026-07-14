@@ -1,0 +1,13 @@
+{
+  "name": "workstream",
+  "version": "1.0.0",
+  "description": "Jira-ticket-to-merge workflow: start a ticket with spec reconciliation and worktrees, drive the PR through review/findings/Slack/merge, and propagate spec deviations.",
+  "author": {
+    "name": "Yunid Bauza",
+    "url": "https://github.com/yunidbauza/claude-kit"
+  },
+  "repository": "https://github.com/yunidbauza/claude-kit",
+  "license": "MIT",
+  "keywords": ["workflow", "jira", "pull-request", "code-review", "worktree", "merge", "automation"],
+  "skills": ["./skills/"]
+}
