@@ -1,0 +1,1 @@
+Invoke the `ship` skill to drive the PR given in $ARGUMENTS (or the current branch's open PR) from pushed to merged — CI watch, self review, findings triage, watch-until-approved, then merge. Pass through any `--auto-merge` flag.
