@@ -6,7 +6,7 @@ skills, each independently invocable, that chain end to end:
 | Command | Purpose |
 |---|---|
 | `/workstream:work-on <KEY>` | Fetch the ticket, reconcile spec vs codebase (hard user gate), set up an isolated worktree, hand off to design/plan/implement |
-| `/workstream:ship [PR] [--auto-merge] [--no-msg]` | PR endgame: CI watch → self code review → findings triage loop → Slack announcement (once) → watch-until-approved with base-branch sync → merge |
+| `/workstream:ship [PR] [--auto-merge]` | PR endgame: CI watch → self code review → findings triage loop → watch-until-approved with base-branch sync → merge |
 | `/workstream:review-pr-findings [PR]` | Adversarial triage of all PR feedback with a persistent per-PR ledger; loops until CI is green with no unresolved threads |
 | `/workstream:merge-pr [PR]` | Squash merge, worktree/branch teardown, default-branch pull, Jira ticket → Done |
 | `/workstream:spec-deviation` | Propagate a mid-work spec change to the PR, the ticket, and affected downstream tickets |
@@ -29,8 +29,6 @@ files.
 - **jira-writer plugin** (this marketplace) — all Jira reads/writes go through
   `jira-writer:jira-writer`. Requires the `JIRA_API_KEY` env var.
 - **`gh` CLI** authenticated against your repos.
-- **Slack MCP** connected (optional — only for ship's announcement step; skipped
-  cleanly when absent or with `--no-msg`).
 
 ## Behavior highlights
 
@@ -40,14 +38,10 @@ files.
   adversarially assessed (VALID / INVALID / NEEDS-USER-DECISION) before any fix;
   invalid findings get a reasoned reply, and a per-PR ledger prevents re-litigating
   across rounds and sessions.
-- **One Slack announcement per PR** — posted when the PR first becomes ready for
-  review; later rounds reply in that thread, and only for human reviewers (bot
-  feedback is handled silently).
 - **One user checkpoint** — the merge confirmation, skippable with `--auto-merge`.
 
 ## Per-user state (`~/.claude/workstream/`)
 
 | File | Purpose |
 |---|---|
-| `ship-config.json` | Slack review channels per repo |
 | `pr-ledgers/<owner>-<repo>-pr<N>.md` | Finding triage ledger per PR; deleted after merge |

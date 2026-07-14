@@ -10,11 +10,9 @@ Each is independently invocable; together they chain end to end:
    ▼
 superpowers: brainstorming → writing-plans → implementation → PR
    ▼
-/workstream:ship [PR] [--auto-merge] [--no-msg]
+/workstream:ship [PR] [--auto-merge]
    │  CI green → self review (code-review, subagent)
    │  findings loop (review-pr-findings, subagent)
-   │  Slack announcement — once per PR (skipped with --no-msg);
-   │  loop rounds reply in-thread for human reviewers only
    │  watch loop: new findings / sync main / approval (~20 min wakeups)
    ▼
 /workstream:merge-pr [PR]
@@ -38,7 +36,6 @@ Standalone entry points:
 - **`gh` CLI** authenticated against the repo.
 - **jira-writer plugin** installed and configured — `JIRA_API_KEY` env var (see the jira-writer skill), or
   the Atlassian MCP connected as fallback.
-- **Slack MCP** connected (optional — only for ship's announcement step).
 
 ## Conventions
 
@@ -54,5 +51,4 @@ Standalone entry points:
 
 | File | Owner | Purpose |
 |---|---|---|
-| `ship-config.json` | ship | Slack review channels per repo: `{"<owner>/<repo>": {"channels": [...], "last_used": "..."}}` |
 | `pr-ledgers/<owner>-<repo>-pr<N>.md` | review-pr-findings | Finding triage ledger per PR; survives sessions/compaction; deleted after merge. |
