@@ -108,6 +108,10 @@ main() {
     local mermaid_input="$2"
     local output_filename="${3:-diagram.png}"
 
+    # Sanitize: ; and quotes are curl -F metacharacters (;type=, ;headers=)
+    # and would corrupt the multipart spec the name is interpolated into.
+    output_filename="${output_filename//[^a-zA-Z0-9._-]/_}"
+
     # Ensure filename ends with .png
     if [[ ! "$output_filename" =~ \.png$ ]]; then
         output_filename="${output_filename}.png"
@@ -139,7 +143,7 @@ main() {
         cp "$mermaid_input" "$mmd_file"
     else
         log_info "Using mermaid code from argument"
-        echo "$mermaid_input" > "$mmd_file"
+        printf '%s\n' "$mermaid_input" > "$mmd_file"
     fi
 
     # Convert to PNG (stderr captured; temp file lives inside temp_dir so EXIT trap cleans it up)

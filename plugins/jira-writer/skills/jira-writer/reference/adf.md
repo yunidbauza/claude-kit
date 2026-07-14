@@ -117,7 +117,7 @@ any ADF send) catches all of them client-side.
 - **204 = success.** PUTs and some DELETEs return HTTP 204 with an empty body. The
   wrapper emits `{"api":"rest","data":{"success":true}}` on 204.
 - **Pre-flight your ADF.** For an opaque `INVALID_INPUT`, run
-  `jira-writer validate_adf /tmp/your-adf.json --bisect` — it reports the first
+  `jira-writer validate_adf /tmp/your-adf.json` — it reports the first
   failing block index and the rule violated, without touching Jira.
 
 ## Rich Comment Example

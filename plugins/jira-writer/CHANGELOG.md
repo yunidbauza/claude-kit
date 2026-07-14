@@ -1,5 +1,63 @@
 # Changelog — jira-writer
 
+## 1.6.2 — 2026-07-13
+
+Backport of defect fixes found while porting this plugin into the APFM shared
+repo as `jira-mate` (claude-skills PR #48), where an AI reviewer and a live
+verification pass surfaced them. Behavior is otherwise unchanged.
+
+### Fixed
+- **Linux base64 line-wrap in diagnostics.** `check-prerequisites.sh` and
+  `test-jira-connection.sh` built the Basic auth header without `tr -d '\n'`;
+  GNU base64 wraps at 76 chars, so long credentials made `doctor` /
+  `connection-test` report false auth failures on Linux (the REST library
+  already stripped correctly).
+- **Silent no-op on paths with spaces.** `markdown-to-adf.mjs` and
+  `adf-validate.mjs` gated `main()` on `import.meta.url === file://argv[1]`,
+  which never matches when the install path contains URL-escapable characters
+  — the scripts exited 0 with empty output. Now compares against
+  `pathToFileURL(argv[1]).href`.
+- **Mixed task/plain lists corrupted.** A list mixing `- [ ]` and plain items
+  was forced entirely into `taskList`, giving plain items checkboxes they
+  never had. Mixed lists now fall back to `bulletList` (`some` → `every`).
+- **Wrapper died on validator crash.** When `adf-validate.mjs` crashed (e.g.
+  unparseable input), both validation paths fed its raw stack trace to jq
+  (`--argjson` / parse), killing the wrapper with a jq usage error instead of
+  an envelope. Non-JSON validator output is now wrapped as
+  `{api:"error", rule:"validator_crash"}`.
+- **Unencoded `fields` query param.** `jira_search_jql` and `jira_get_issue`
+  appended the caller-supplied `fields` list raw; custom field names with
+  spaces silently malformed the URL. Now percent-encoded like `jql`.
+- **curl `-F` metacharacters in attachment filenames.** Caller-supplied
+  filenames are interpolated into the multipart spec where `;` and quotes are
+  curl syntax; sanitized to `[a-zA-Z0-9._-]` in the mermaid uploader and
+  `jira_upload_attachment` (spaces become `_`).
+- **Inline mermaid input via `echo`.** Input consisting solely of echo flag
+  characters (`-n`/`-e`/`-E`) would vanish; now written with `printf '%s\n'`.
+- **Docs:** SKILL.md's `add_comment "…\n…"` example used `\n` inside double
+  quotes (bash sends it literally) — now a real multi-line string; one
+  workflow.md curl example showed a raw un-base64'd Authorization header, and
+  two more (workflow.md, troubleshooting.md) base64-encoded without the
+  newline strip.
+
+### Changed
+- **`--bisect` de-advertised.** The validator reports the failing
+  `block_index` natively, so the flag never changed the outcome. Removed from
+  SKILL.md, `reference/adf.md`, and usage strings; still accepted silently
+  for compatibility.
+- **Hardening (no behavior change in shipped paths):** `_jira_init_cache`
+  registers its cleanup EXIT trap only when no trap exists (never clobbers a
+  future sourcing caller's cleanup); `_resolve_content_input`'s temp-file
+  cleanup is now reachable regardless of the call site's errexit context
+  (`|| rc=$?`); `_flag_value` / `_has_bool` iterate with the zero-word
+  `${arr[@]+"${arr[@]}"}` idiom instead of `"${arr[@]:-}"` (which yields one
+  empty word on an empty array).
+
+### Tests
+- Updated the mixed-list test to assert the corrected `bulletList` fallback
+  (it previously codified the corrupting behavior) and the `--summary-only`
+  URL assertion to expect the percent-encoded `fields` param.
+
 ## 1.6.1 — 2026-07-10
 
 ### Fixed

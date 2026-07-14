@@ -205,7 +205,9 @@ _parse_flags() {
 # _flag_value NAME — echoes the value of the named single-value flag, or "" if absent.
 _flag_value() {
     local name="$1" entry
-    for entry in "${_FLAGS[@]:-}"; do
+    # ${arr[@]+...} yields zero words for an empty array (":-" would yield
+    # one empty word) while staying set -u safe.
+    for entry in ${_FLAGS[@]+"${_FLAGS[@]}"}; do
         [[ "$entry" == "$name="* ]] && { echo "${entry#*=}"; return 0; }
     done
     return 0
@@ -214,7 +216,7 @@ _flag_value() {
 # _has_bool NAME — returns 0 if the named bool flag is present.
 _has_bool() {
     local name="$1" entry
-    for entry in "${_BOOLS[@]:-}"; do
+    for entry in ${_BOOLS[@]+"${_BOOLS[@]}"}; do
         [[ "$entry" == "$name" ]] && return 0
     done
     return 1
@@ -261,11 +263,13 @@ _resolve_content_input() {
             log_error "Node 18+ required for --markdown but 'node' not found in PATH"
             return 1
         fi
-        local tmp
+        local tmp rc=0
         tmp="$(mktemp)" || return 1
         printf '%s' "$desc" > "$tmp"
-        node "$script_dir/markdown-to-adf.mjs" "$tmp"
-        local rc=$?
+        # `|| rc=$?` keeps the cleanup reachable even if a future call site
+        # runs this function with errexit active (today all call sites are
+        # `$(...) || {}`, which suppresses it).
+        node "$script_dir/markdown-to-adf.mjs" "$tmp" || rc=$?
         rm -f "$tmp"
         return $rc
     fi
@@ -281,7 +285,7 @@ _usage_for_op() {
       update_issue) echo "update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]" ;;
       add_comment) echo "add_comment KEY BODY [--desc-file PATH] [--markdown]" ;;
       get_issue) echo "get_issue KEY [FIELDS] [--summary-only]" ;;
-      validate_adf) echo "validate_adf PATH_TO_ADF_JSON [--bisect]" ;;
+      validate_adf) echo "validate_adf PATH_TO_ADF_JSON" ;;
       get_transitions) echo "get_transitions KEY" ;;
       transition_issue) echo "transition_issue KEY TRANSITION_ID" ;;
       search_jql) echo "search_jql JQL [max_results]" ;;
@@ -315,9 +319,17 @@ _validate_adf_or_error() {
     rm -f "$tmp"
     if [[ $rc -ne 0 ]]; then
         local rule path msg
-        rule=$(echo "$result" | jq -r '.rule // "validation_failed"')
-        path=$(echo "$result" | jq -r '.path // ""')
-        msg=$(echo "$result"  | jq -r '.message // "ADF validation failed"')
+        # A validator crash (unparseable input, node error) emits a raw stack
+        # trace, not the fail JSON — don't feed that to jq's parser.
+        if jq -e . >/dev/null 2>&1 <<<"$result"; then
+            rule=$(echo "$result" | jq -r '.rule // "validation_failed"')
+            path=$(echo "$result" | jq -r '.path // ""')
+            msg=$(echo "$result"  | jq -r '.message // "ADF validation failed"')
+        else
+            rule="validator_crash"
+            path=""
+            msg="$result"
+        fi
         jq -n --arg op "$op" --arg rule "$rule" --arg path "$path" --arg msg "$msg" \
             '{api:"error", operation:$op, rule:$rule, path:$path, error:$msg}'
         return 1
@@ -879,10 +891,17 @@ op_validate_adf() {
         jq -n --argjson data "$result" '{api:"rest", data:$data}'
         return 0
     else
-        jq -n --argjson data "$result" '{api:"error", operation:"validate_adf",
-                                          error:($data.message // "validation failed"),
-                                          rule:($data.rule // null),
-                                          path:($data.path // null)}'
+        # A validator crash (unparseable input, node error) emits a raw stack
+        # trace, not the fail JSON — --argjson on it would kill the wrapper.
+        if jq -e . >/dev/null 2>&1 <<<"$result"; then
+            jq -n --argjson data "$result" '{api:"error", operation:"validate_adf",
+                                              error:($data.message // "validation failed"),
+                                              rule:($data.rule // null),
+                                              path:($data.path // null)}'
+        else
+            jq -n --arg msg "$result" '{api:"error", operation:"validate_adf",
+                                        error:$msg, rule:"validator_crash", path:null}'
+        fi
         return 1
     fi
 }
@@ -906,7 +925,7 @@ print_usage() {
     echo "  add_worklog KEY TIME_SPENT       - Add worklog entry" >&2
     echo "  upload_attachment KEY FILE [name] - Upload file attachment" >&2
     echo "  get_remote_links KEY             - Get remote issue links" >&2
-    echo "  validate_adf PATH_TO_ADF_JSON [--bisect] - Validate ADF locally (no Jira call)" >&2
+    echo "  validate_adf PATH_TO_ADF_JSON    - Validate ADF locally (no Jira call)" >&2
     echo "  test_connection                  - Test API connection" >&2
     echo "" >&2
     echo "Output:" >&2

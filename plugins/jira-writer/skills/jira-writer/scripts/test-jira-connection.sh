@@ -105,7 +105,7 @@ test_rest_api() {
     log_info "Testing authentication..."
 
     local auth_header
-    auth_header=$(echo -n "$JIRA_API_KEY" | base64)
+    auth_header=$(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')
 
     local response
     response=$(curl -s -w "\n%{http_code}" \
