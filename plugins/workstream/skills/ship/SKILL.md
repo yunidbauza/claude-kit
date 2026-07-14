@@ -81,10 +81,15 @@ subagent with the decisions. Repeat until nothing is unresolved.
 
 ## Step 5 — Watch until approved (in-session loop)
 
-**Auto-merge bypass:** when auto-merge is active (flag, user instruction, or config),
-skip this loop. Step 4 ending with CI green and no unresolved threads is the
-approval signal — run the base-branch sync check (item 2) once, then proceed
-straight to Step 6.
+**Auto-merge bypass — of the approval WAIT only, never of the gates:** when
+auto-merge is active (flag, user instruction, or config), skip this loop. What is
+bypassed is waiting for a human `APPROVED` review — nothing else. Steps 2–4 are
+non-negotiable prerequisites in every mode: do NOT enter Step 6 unless CI is green,
+the self code review (Step 3) ran and its valid findings were applied, and the
+findings loop (Step 4) finished with every finding — yours and anyone else's —
+resolved and no unresolved threads. If any of that is not true, there is no
+approval signal and nothing merges. When it is all true, run the base-branch sync
+check (item 2) once, then proceed to Step 6.
 
 Self-schedule a wakeup roughly every 20 minutes (use the session's scheduled-wakeup
 /loop mechanism; if unavailable, tell the user to re-run `/workstream:ship` to resume —
@@ -124,5 +129,8 @@ the ledger and PR state make resumption idempotent). On each wake:
 - Merging while behind the base branch or with unresolved threads.
 - Waiting for a human PR approval while auto-merge is active — there, CI green +
   all findings resolved IS the approval signal.
+- Treating auto-merge as permission to skip Steps 2–4 — it only skips the approval
+  wait; merging with failing CI, an un-run self review, or any unresolved finding
+  is never allowed, in any mode.
 - Auto-merging without checking `ship-config.json` when no flag was passed — the
   per-repo config is part of the resolution order.
