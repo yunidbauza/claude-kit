@@ -97,10 +97,12 @@ test('each taskItem gets a unique localId', async () => {
   assert.equal(new Set(ids).size, 3);
 });
 
-test('mixed list (some task, some not) treats as taskList when any item is task', async () => {
+test('mixed list (some task, some not) falls back to bulletList — taskList would give plain items checkboxes they never had', async () => {
   const adf = await convert('- [x] checked\n- plain');
-  assert.equal(adf.content[0].type, 'taskList');
+  assert.equal(adf.content[0].type, 'bulletList');
   assert.equal(adf.content[0].content.length, 2);
+  const types = JSON.stringify(adf);
+  assert.ok(!types.includes('taskItem'), 'no taskItem nodes in a mixed list');
 });
 
 test('strong wraps text in strong mark', async () => {

@@ -62,7 +62,7 @@ For each mermaid block (see `reference/mermaid.md` for options and diagram types
     Or directly:
     POST to: https://$JIRA_DOMAIN/rest/api/3/issue/$ISSUE_KEY/attachments
     Headers:
-        Authorization: Basic $JIRA_API_KEY
+        Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')
         X-Atlassian-Token: no-check
     Body: multipart/form-data with file
 
@@ -204,7 +204,7 @@ PREPEND ("at the top"):  fetch, prepend new nodes, PUT
 **REST API update format:**
 ```bash
 curl -X PUT \
-  -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64)" \
+  -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')" \
   -H "Content-Type: application/json" \
   -d '{"fields":{"description":{"version":1,"type":"doc","content":[...]}}}' \
   "https://$JIRA_DOMAIN/rest/api/3/issue/$ISSUE_KEY"

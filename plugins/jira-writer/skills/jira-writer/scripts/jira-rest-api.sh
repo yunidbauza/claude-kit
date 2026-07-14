@@ -45,8 +45,12 @@ JIRA_CACHE_DIR="${JIRA_CACHE_DIR:-/tmp/jira_cache_$$}"
 _jira_init_cache() {
     if [[ ! -d "$JIRA_CACHE_DIR" ]]; then
         mkdir -p "$JIRA_CACHE_DIR"
-        # Register cleanup trap only once
-        trap '_jira_cleanup_cache' EXIT
+        # Register cleanup trap only once — and never clobber a trap the
+        # sourcing script already owns (a leaked per-PID cache dir is the
+        # lesser evil vs silently disabling a caller's cleanup).
+        if [[ -z "$(trap -p EXIT)" ]]; then
+            trap '_jira_cleanup_cache' EXIT
+        fi
     fi
 }
 
@@ -224,7 +228,9 @@ jira_get_issue() {
 
     local endpoint="/rest/api/3/issue/$issue_key"
     if [[ -n "$fields" ]]; then
-        endpoint="$endpoint?fields=$fields"
+        local encoded_fields
+        encoded_fields=$(echo -n "$fields" | jq -sRr @uri)
+        endpoint="$endpoint?fields=$encoded_fields"
     fi
 
     local response
@@ -304,11 +310,12 @@ jira_search_jql() {
 
     jira_check_credentials || return 1
 
-    # URL encode the JQL
-    local encoded_jql
+    # URL encode the JQL and fields (custom field names can carry spaces etc.)
+    local encoded_jql encoded_fields
     encoded_jql=$(echo -n "$jql" | jq -sRr @uri)
+    encoded_fields=$(echo -n "$fields" | jq -sRr @uri)
 
-    local endpoint="/rest/api/3/search/jql?jql=$encoded_jql&maxResults=$max_results&fields=$fields"
+    local endpoint="/rest/api/3/search/jql?jql=$encoded_jql&maxResults=$max_results&fields=$encoded_fields"
 
     local response
     response=$(_jira_get "$endpoint")
@@ -429,6 +436,9 @@ jira_upload_attachment() {
     local issue_key="$1"
     local file_path="$2"
     local filename="${3:-$(basename "$file_path")}"
+    # Sanitize: ; and quotes are curl -F metacharacters and would corrupt
+    # the multipart spec below (spaces become _ as a side effect).
+    filename="${filename//[^a-zA-Z0-9._-]/_}"
 
     jira_check_credentials || return 1
 

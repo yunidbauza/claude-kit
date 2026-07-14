@@ -71,13 +71,15 @@ jira-writer update_issue PROJ-123 '{"summary":"New title"}' --desc-file /tmp/bod
 
 # Comment (‑‑markdown / ‑‑desc-file for rich ADF comments)
 jira-writer add_comment PROJ-123 "Quick note."
-jira-writer add_comment PROJ-123 "## Update\n- [x] Done" --markdown
+jira-writer add_comment PROJ-123 "## Update
+
+- [x] Done" --markdown
 
 # Other
 jira-writer transition_issue PROJ-123 TRANSITION_ID
 jira-writer upload_attachment PROJ-123 /path/to/file.png
 jira-writer add_worklog PROJ-123 "2h"
-jira-writer validate_adf /tmp/my-adf.json [--bisect]   # local ADF check, no Jira call
+jira-writer validate_adf /tmp/my-adf.json   # local ADF check, no Jira call
 
 # Diagnostics & mermaid
 jira-writer doctor              # dependency status (JSON)

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 
 const INLINE_TYPES = new Set(['text', 'hardBreak', 'mention', 'emoji', 'inlineCard']);
 
@@ -78,6 +79,6 @@ async function main() {
   process.exit(result.ok ? 0 : 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(e => { console.error(e.stack || e.message); process.exit(2); });
 }

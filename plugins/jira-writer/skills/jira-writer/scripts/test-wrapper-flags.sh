@@ -280,8 +280,9 @@ BASH
   export JIRA_API_KEY="u@e.com:x"
 
   bash "$SCRIPT_DIR/jira-api-wrapper.sh" get_issue INCORP-1 --summary-only >/dev/null
-  grep -q "fields=summary,issuetype,parent,status,assignee" "$MOCK_LOG" \
-    || fail "--summary-only should narrow ?fields= param. log: $(cat $MOCK_LOG)"
+  # fields is percent-encoded before hitting the URL (commas become %2C)
+  grep -q "fields=summary%2Cissuetype%2Cparent%2Cstatus%2Cassignee" "$MOCK_LOG" \
+    || fail "--summary-only should narrow ?fields= param (URL-encoded). log: $(cat $MOCK_LOG)"
 
   PATH=$(echo "$PATH" | sed -e "s|$MOCK_DIR:||")
   rm -rf "$MOCK_DIR"

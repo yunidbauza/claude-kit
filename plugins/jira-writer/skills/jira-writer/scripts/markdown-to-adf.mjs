@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { marked } from './vendor/marked/marked.esm.mjs';
 
 const HTML_ENTITIES = { '&lt;': '<', '&gt;': '>', '&amp;': '&', '&quot;': '"', '&#39;': "'" };
@@ -77,7 +78,9 @@ function tokenToAdf(token) {
     case 'paragraph':
       return { type: 'paragraph', content: inlineTokens(token.tokens) };
     case 'list': {
-      const isTaskList = token.items.some(it => it.task === true);
+      // Mixed task/plain lists fall back to bulletList — taskList would force
+      // plain items into checkbox taskItem nodes they never had.
+      const isTaskList = token.items.every(it => it.task === true);
       if (isTaskList) return taskList(token.items);
       return {
         type: token.ordered ? 'orderedList' : 'bulletList',
@@ -142,6 +145,6 @@ async function main() {
   else process.stdout.write(json + '\n');
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(e => { console.error(e.stack || e.message); process.exit(1); });
 }

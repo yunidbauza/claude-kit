@@ -96,7 +96,7 @@ rest_error=""
 
 if [[ "$jira_domain_available" == "true" ]] && [[ "$jira_api_key_available" == "true" ]] && [[ "$curl_available" == "true" ]] && [[ "$jq_available" == "true" ]]; then
     # Test authentication
-    auth_header=$(echo -n "$JIRA_API_KEY" | base64)
+    auth_header=$(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')
     response=$(curl -s -w "\n%{http_code}" \
         -H "Authorization: Basic $auth_header" \
         -H "Content-Type: application/json" \

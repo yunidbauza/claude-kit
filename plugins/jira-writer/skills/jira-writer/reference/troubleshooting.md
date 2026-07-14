@@ -48,7 +48,7 @@ When a description update fails after attachments were uploaded:
 ```
 FOR each uploaded attachment_id:
     curl -X DELETE \
-      -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64)" \
+      -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')" \
       "https://$JIRA_DOMAIN/rest/api/3/attachment/$attachment_id"
 REPORT: "Failed to update the issue description. I've cleaned up the uploaded
          diagram attachments to avoid orphaned files. Error: [details]"
