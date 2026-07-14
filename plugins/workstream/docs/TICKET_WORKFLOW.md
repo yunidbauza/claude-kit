@@ -13,7 +13,8 @@ superpowers: brainstorming → writing-plans → implementation → PR
 /workstream:ship [PR] [--auto-merge]
    │  CI green → self review (code-review, subagent)
    │  findings loop (review-pr-findings, subagent)
-   │  watch loop: new findings / sync main / approval (~20 min wakeups)
+   │  watch loop: new findings / sync base branch / approval (~20 min wakeups)
+   │  (--auto-merge: skip the wait — findings resolved + CI green ⇒ approved)
    ▼
 /workstream:merge-pr [PR]
       squash merge → worktree/branch cleanup → default-branch pull → Jira ticket Done
@@ -51,4 +52,5 @@ Standalone entry points:
 
 | File | Owner | Purpose |
 |---|---|---|
+| `ship-config.json` | ship | Per-repo auto-merge default: `{"<owner>/<repo>": {"auto_merge": true}}` — when active, CI green + all findings resolved replaces the human-approval wait. |
 | `pr-ledgers/<owner>-<repo>-pr<N>.md` | review-pr-findings | Finding triage ledger per PR; survives sessions/compaction; deleted after merge. |

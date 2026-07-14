@@ -270,6 +270,8 @@ superpowers: brainstorm → plan → implement → PR created
       │       gather all feedback → ledger → adversarial triage
       │       → fix valid / reply to invalid → push → repeat until green
       │  watch loop (~20 min wakeups): new findings? sync base branch · approved?
+      │  (--auto-merge, flag or ship-config.json: skip the approval wait —
+      │   CI green + all findings resolved ⇒ approved, merge directly)
       ▼
 /workstream:merge-pr [PR]
       │  squash merge · worktree/branch teardown · default-branch pull

@@ -38,10 +38,14 @@ files.
   adversarially assessed (VALID / INVALID / NEEDS-USER-DECISION) before any fix;
   invalid findings get a reasoned reply, and a per-PR ledger prevents re-litigating
   across rounds and sessions.
-- **One user checkpoint** — the merge confirmation, skippable with `--auto-merge`.
+- **One user checkpoint** — the merge confirmation. With `--auto-merge` (flag, or
+  per-repo config in `ship-config.json`) ship doesn't wait for a human PR approval
+  at all: CI green + every finding resolved is the approval signal, and it hands
+  off to merge-pr directly.
 
 ## Per-user state (`~/.claude/workstream/`)
 
 | File | Purpose |
 |---|---|
+| `ship-config.json` | Per-repo auto-merge default: `{"<owner>/<repo>": {"auto_merge": true}}` |
 | `pr-ledgers/<owner>-<repo>-pr<N>.md` | Finding triage ledger per PR; deleted after merge |

@@ -20,9 +20,24 @@ Never merge before the review has run and its findings are resolved.
 Ship is an orchestrator: the triage/reply mechanics live in `review-pr-findings`,
 the merge mechanics in `merge-pr`. Do not duplicate their instructions here.
 
-Arguments: an optional PR number/URL, and optional `--auto-merge` (merge unattended
-on approval — treat an explicit user instruction like "ship it without asking" the
-same way).
+Arguments: an optional PR number/URL, and optional `--auto-merge`. Auto-merge
+changes what counts as the approval signal: instead of waiting for a human PR
+approval, **CI green + every finding resolved** (self review applied, findings loop
+finished with no unresolved threads) IS the approval — ship skips the
+watch-for-approval loop and the merge confirmation and hands off to `merge-pr`
+directly. Treat an explicit user instruction like "ship it without asking" the same
+way.
+
+Auto-merge can also be enabled per repo without passing the flag, via
+`~/.claude/workstream/ship-config.json`:
+
+```json
+{ "<owner>/<repo>": { "auto_merge": true } }
+```
+
+Resolution order: explicit `--auto-merge` flag or user instruction → config entry →
+default (off). When the user says to always auto-merge a repo, create/update the
+entry (create the file/directory if missing).
 
 ## Step 1 — Preflight
 
@@ -66,6 +81,11 @@ subagent with the decisions. Repeat until nothing is unresolved.
 
 ## Step 5 — Watch until approved (in-session loop)
 
+**Auto-merge bypass:** when auto-merge is active (flag, user instruction, or config),
+skip this loop. Step 4 ending with CI green and no unresolved threads is the
+approval signal — run the base-branch sync check (item 2) once, then proceed
+straight to Step 6.
+
 Self-schedule a wakeup roughly every 20 minutes (use the session's scheduled-wakeup
 /loop mechanism; if unavailable, tell the user to re-run `/workstream:ship` to resume —
 the ledger and PR state make resumption idempotent). On each wake:
@@ -83,7 +103,8 @@ the ledger and PR state make resumption idempotent). On each wake:
 ## Step 6 — Merge (the ONE user checkpoint)
 
 - Ask the user once: "green + reviewed + approved — merge PR <N>?" Skip the question
-  only when pre-authorized (`--auto-merge` or an explicit "ship it without asking").
+  when auto-merge is active (flag, explicit "ship it without asking", or the
+  per-repo config entry).
 - On yes: invoke the `merge-pr` skill with the PR number — it owns squash merge,
   worktree/branch cleanup, default-branch pull, and the Jira transition to Done. Do not
   duplicate any of those steps here.
@@ -101,3 +122,7 @@ the ledger and PR state make resumption idempotent). On each wake:
 - Inlining triage/reply mechanics instead of delegating to `review-pr-findings`.
 - Guessing a NEEDS-USER-DECISION verdict instead of surfacing it.
 - Merging while behind the base branch or with unresolved threads.
+- Waiting for a human PR approval while auto-merge is active — there, CI green +
+  all findings resolved IS the approval signal.
+- Auto-merging without checking `ship-config.json` when no flag was passed — the
+  per-repo config is part of the resolution order.
