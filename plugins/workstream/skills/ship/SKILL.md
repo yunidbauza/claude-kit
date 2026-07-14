@@ -89,7 +89,8 @@ the self code review (Step 3) ran and its valid findings were applied, and the
 findings loop (Step 4) finished with every finding — yours and anyone else's —
 resolved and no unresolved threads. If any of that is not true, there is no
 approval signal and nothing merges. When it is all true, run the base-branch sync
-check (item 2) once, then proceed to Step 6.
+check (item 2) once, then proceed to Step 6 — which, as always, hands off to the
+`merge-pr` skill; ship never performs the merge itself.
 
 Self-schedule a wakeup roughly every 20 minutes (use the session's scheduled-wakeup
 /loop mechanism; if unavailable, tell the user to re-run `/workstream:ship` to resume —

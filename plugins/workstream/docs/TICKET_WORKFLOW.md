@@ -14,7 +14,8 @@ superpowers: brainstorming → writing-plans → implementation → PR
    │  CI green → self review (code-review, subagent)
    │  findings loop (review-pr-findings, subagent)
    │  watch loop: new findings / sync base branch / approval (~20 min wakeups)
-   │  (--auto-merge: skip the wait — findings resolved + CI green ⇒ approved)
+   │  (--auto-merge: skip the wait — findings resolved + CI green ⇒ approved,
+   │   hand off to merge-pr)
    ▼
 /workstream:merge-pr [PR]
       squash merge → worktree/branch cleanup → default-branch pull → Jira ticket Done
