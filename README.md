@@ -249,9 +249,32 @@ MIT
 
 ---
 
-## Also in this kit
+## Also in this kit: workstream
 
-- **[workstream](plugins/workstream/README.md)** — Jira-ticket-to-merge workflow
-  (`/workstream:work-on`, `/workstream:ship`, `/workstream:review-pr-findings`,
-  `/workstream:merge-pr`, `/workstream:spec-deviation`). Depends on jira-writer
-  for all Jira access. Install with `/plugin install workstream`.
+**[workstream](plugins/workstream/README.md)** — Jira-ticket-to-merge workflow.
+Five skills that chain end to end (each also independently invocable). Depends on
+jira-writer for all Jira access. Install with `/plugin install workstream`.
+
+```
+/workstream:work-on PROJ-123
+      │  fetch ticket (jira-writer) · reconcile spec vs codebase
+      │  ⛔ hard gate: report deviations, wait for user go-ahead
+      │  isolated worktree off the fresh default branch
+      ▼
+superpowers: brainstorm → plan → implement → PR created
+      ▼
+/workstream:ship [PR] [--auto-merge]
+      │  wait for CI green
+      │  self review        → code-review (subagent)
+      │  findings loop      → /workstream:review-pr-findings (subagent)
+      │       gather all feedback → ledger → adversarial triage
+      │       → fix valid / reply to invalid → push → repeat until green
+      │  watch loop (~20 min wakeups): new findings? sync base branch · approved?
+      ▼
+/workstream:merge-pr [PR]
+      │  squash merge · worktree/branch teardown · default-branch pull
+      └─ Jira ticket → Done
+
+(anytime) /workstream:spec-deviation — propagate a mid-work spec change
+          to the PR, the ticket, and affected downstream tickets
+```
