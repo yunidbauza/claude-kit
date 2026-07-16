@@ -42,11 +42,23 @@ entry (create the file/directory if missing).
 ## Step 1 — Preflight
 
 ```bash
-gh pr view <N> --json number,state,headRefName,statusCheckRollup
+gh pr view <N> --json number,state,isDraft,headRefName,statusCheckRollup
 ```
 
 Confirm the branch is pushed and the PR is open. If CI shows an unfixable blocker
 (e.g. a billing/limits message), surface it immediately and stop.
+
+**Move the Jira ticket to In Review.** As soon as the PR is confirmed open and NOT
+a draft, transition the linked ticket automatically — this is the step nothing else
+in the workflow performs (work-on owns In Progress, merge-pr owns Done):
+
+- Parse the ticket key from the PR's `headRefName` (`[A-Za-z]+-[0-9]+`,
+  case-insensitive, uppercased); fall back to the PR title/body.
+- Key found → transition the ticket to **In Review** via `jira-writer:jira-writer`
+  — unless its current status is already In Review or later (e.g. Done); never move
+  a ticket backward.
+- Draft PR → skip the transition (re-run it when the PR becomes ready). No key
+  found → skip and note it.
 
 **Stand in the PR's workspace.** Later steps run local verification and `git push`
 from wherever this session sits:
@@ -124,6 +136,8 @@ the ledger and PR state make resumption idempotent). On each wake:
 
 ## Red flags
 
+- A non-draft PR in ship with the ticket still In Progress — the In Review
+  transition is ship's job, in preflight, before anything else.
 - Running the review before CI is green, or merging before the review ran.
 - Inlining triage/reply mechanics instead of delegating to `review-pr-findings`.
 - Guessing a NEEDS-USER-DECISION verdict instead of surfacing it.

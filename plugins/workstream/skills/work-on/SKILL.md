@@ -91,7 +91,8 @@ Step 2 as input there), then `superpowers:writing-plans`, then plan execution, t
 `superpowers:finishing-a-development-branch` to produce the PR. **For tickets with
 a UI surface:** the brainstorm must present design options as browser-rendered HTML
 mockups with 2–3 variants (ASCII mockups only if the user asks). Once the PR
-exists, continue with the `ship` skill to drive it to merge.
+exists, continue with the `ship` skill to drive it to merge — ship's preflight
+moves the ticket to In Review the moment the PR is open and non-draft.
 
 ## Red flags
 

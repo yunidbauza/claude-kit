@@ -11,6 +11,7 @@ Each is independently invocable; together they chain end to end:
 superpowers: brainstorming → writing-plans → implementation → PR
    ▼
 /workstream:ship [PR] [--auto-merge]
+   │  ticket → In Review (open non-draft PR, jira-writer)
    │  CI green → self review (code-review, subagent)
    │  findings loop (review-pr-findings, subagent)
    │  watch loop: new findings / sync base branch / approval (~20 min wakeups)
