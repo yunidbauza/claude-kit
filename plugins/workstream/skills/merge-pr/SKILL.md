@@ -35,7 +35,45 @@ gh pr checks
 - Checks still running → wait and re-check before proceeding.
 - Any check failed → **stop**. Surface the failure. Do not merge.
 
-## Step 2: Squash merge
+## Step 2: Sync with upstream — detect drift and conflicts
+
+The base branch may have moved since this PR was last synced. Detect both cases
+BEFORE merging:
+
+```bash
+BASE=$(gh pr view <N> --json baseRefName --jq '.baseRefName')
+git fetch origin
+gh pr view <N> --json mergeable,mergeStateStatus
+git rev-list --count HEAD..origin/$BASE   # run from the PR's workspace — commits that landed upstream since divergence
+```
+
+Syncing and conflict resolution happen in the PR's working tree: find the branch's
+worktree with `git worktree list` and operate there, or check the branch out if no
+worktree exists.
+
+- **Up to date and MERGEABLE** → proceed to Step 3.
+- **Behind, no conflicts** → assess what landed before absorbing it:
+  `git log --oneline HEAD..origin/$BASE` and `git diff HEAD...origin/$BASE --stat`.
+  Compare against the PR's own diff — did upstream touch files, interfaces, or
+  behavior this PR modifies or relies on? No overlap → merge `origin/$BASE` into
+  the branch, push, wait for CI green, proceed. Overlap → merge, run the repo's
+  targeted verification on the affected paths, and treat any behavioral
+  interaction as a conflict for the purposes of the confirmation rule below.
+- **CONFLICTING** → merge `origin/$BASE` into the branch and resolve each conflict
+  deliberately: first read the upstream commits that introduced the conflicting
+  hunks (`git log -p origin/$BASE -- <file>`) so you understand BOTH intents, then
+  resolve preserving both. Never resolve by blanket `--ours`/`--theirs`. After
+  resolving: run the repo's targeted verification, commit the merge, push, and
+  wait for CI green before proceeding.
+- **Confirmation hard stop:** if a resolution (or absorbing upstream changes)
+  would break or drastically change functionality that a previously merged PR
+  introduced — or materially change what THIS PR was reviewed as doing — do NOT
+  merge and do NOT push a guess. This skill runs in a forked subagent that cannot
+  ask questions interactively: abort the merge and report back with the
+  conflicting files, both sides' intent, and your proposed resolution, so the
+  user can confirm before merge-pr is re-run.
+
+## Step 3: Squash merge
 
 ```bash
 gh pr merge --squash --delete-branch
@@ -44,7 +82,7 @@ gh pr merge --squash --delete-branch
 If the user wants to review or edit the squash commit message first, open
 `gh pr view --web` and let them complete the merge manually.
 
-## Step 3: Clean up the local workspace
+## Step 4: Clean up the local workspace
 
 Work started with `work-on` lives in a **git worktree**, not just a branch on the
 shared checkout. Resolve the head branch and detect which case applies:
@@ -87,7 +125,7 @@ record.
 Either case leaves the session in the main working tree on the repo's default
 branch (`$DEFAULT` — usually `main`).
 
-## Step 4: Move the linked Jira ticket to Done
+## Step 5: Move the linked Jira ticket to Done
 
 1. Parse a ticket key from the branch name, case-insensitively — worktree branches
    and plain branches both keep the key somewhere in the name:
@@ -108,13 +146,13 @@ it in the final report.
 |---|---|
 | CI failing | Stop. Report the failing check. Do not merge. |
 | CI not yet run | Wait for checks to complete. Do not skip. |
-| Merge conflict | Stop. Surface the conflict. Resolve before merging. |
+| Merge conflict | Resolve via Step 2 (understand both intents, verify, push). Abort and report for confirmation if the resolution breaks/changes previously merged functionality. |
 | Remote branch already deleted | Proceed — the PR was already merged elsewhere. |
 | `git branch -d` refused | Use `-D` after confirming the squash succeeded remotely. |
 | Local branch already deleted (gh removed it during merge) | Proceed — nothing to clean up. |
 | `git worktree remove` refused (dirty) | Add `--force`; the remote squash is authoritative. |
 | Worktree already gone | Skip removal; run `git worktree prune` + branch delete, proceed. |
-| Jira ticket not found | Skip Step 4. Note it to the user. |
+| Jira ticket not found | Skip Step 5. Note it to the user. |
 
 ## Workflow context
 

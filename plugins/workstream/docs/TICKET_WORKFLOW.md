@@ -19,6 +19,7 @@ superpowers: brainstorming → writing-plans → implementation → PR
    │   hand off to merge-pr)
    ▼
 /workstream:merge-pr [PR]
+      upstream sync + conflict resolution (confirm if breaking) →
       squash merge → worktree/branch cleanup → default-branch pull → Jira ticket Done
 ```
 
