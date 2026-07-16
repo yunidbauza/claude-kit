@@ -264,6 +264,7 @@ jira-writer for all Jira access. Install with `/plugin install workstream`.
 superpowers: brainstorm → plan → implement → PR created
       ▼
 /workstream:ship [PR] [--auto-merge]
+      │  ticket → In Review (open non-draft PR, jira-writer)
       │  wait for CI green
       │  self review        → code-review (subagent)
       │  findings loop      → /workstream:review-pr-findings (subagent)
@@ -274,6 +275,7 @@ superpowers: brainstorm → plan → implement → PR created
       │   CI green + all findings resolved ⇒ approved, hand off to merge-pr)
       ▼
 /workstream:merge-pr [PR]
+      │  upstream sync + conflict resolution (confirm if breaking)
       │  squash merge · worktree/branch teardown · default-branch pull
       └─ Jira ticket → Done
 
