@@ -4,8 +4,8 @@ description: >-
   Use when a PR is open and should be driven to merge — "ship it", "ship the
   ticket", "merge when green", "run the PR endgame", or after
   superpowers:finishing-a-development-branch produced a PR. Runs the full tail:
-  CI watch → self code review → findings triage loop → watch-until-approved
-  loop (with main sync) → merge-pr.
+  draft self-review → mark ready (the CI trigger) → CI watch → findings triage
+  loop → watch-until-approved loop (with main sync) → merge-pr.
 ---
 
 # Ship (PR endgame)
@@ -13,9 +13,18 @@ description: >-
 ## Overview
 
 Drives an open PR from "pushed" to "merged" with exactly one user checkpoint (the
-merge confirmation — skippable if pre-authorized). Order is fixed: CI green FIRST,
-then self review, then the findings loop, then watch, then merge.
-Never merge before the review has run and its findings are resolved.
+merge confirmation — skippable if pre-authorized).
+
+**CI minutes are the scarce resource.** Every push to a ready PR re-triggers the
+full CI run (build + a Postgres-backed boot smoke). So ship does all of its own
+work while the PR is a **draft** — where CI is gated off (`if: draft == false`) and
+pushes cost zero minutes — and only marks the PR **ready-for-review** once the self
+review is applied and local verification passes. Marking ready IS the moment CI
+first runs, and by then it runs on already-verified code, so it runs about once.
+
+Fixed order: preflight (ensure draft) → self review on the draft → local verify +
+**one batched push** + mark ready → CI green → findings loop → watch → merge. Never
+merge before the review has run and its findings are resolved.
 
 Ship is an orchestrator: the triage/reply mechanics live in `review-pr-findings`,
 the merge mechanics in `merge-pr`. Do not duplicate their instructions here.
@@ -39,6 +48,14 @@ Resolution order: explicit `--auto-merge` flag or user instruction → config en
 default (off). When the user says to always auto-merge a repo, create/update the
 entry (create the file/directory if missing).
 
+## Batch-push rule (applies to every step)
+
+CI re-runs on each push to a ready PR. Within any fix phase — the self review and
+each findings round — make ALL the commits for that phase locally, verify once, then
+**push a single time**. Never commit-push-commit-push finding by finding; that
+multiplies CI runs. On a draft the push is free regardless, which is exactly why the
+self-review fixes go in before the PR is marked ready.
+
 ## Step 1 — Preflight
 
 ```bash
@@ -48,17 +65,17 @@ gh pr view <N> --json number,state,isDraft,headRefName,statusCheckRollup
 Confirm the branch is pushed and the PR is open. If CI shows an unfixable blocker
 (e.g. a billing/limits message), surface it immediately and stop.
 
-**Move the Jira ticket to In Review.** As soon as the PR is confirmed open and NOT
-a draft, transition the linked ticket automatically — this is the step nothing else
-in the workflow performs (work-on owns In Progress, merge-pr owns Done):
+**Ensure the PR is a draft before doing any work.** The self review and its fixes
+must land while CI is gated off:
 
-- Parse the ticket key from the PR's `headRefName` (`[A-Za-z]+-[0-9]+`,
-  case-insensitive, uppercased); fall back to the PR title/body.
-- Key found → transition the ticket to **In Review** via `jira-writer:jira-writer`
-  — unless its current status is already In Review or later (e.g. Done); never move
-  a ticket backward.
-- Draft PR → skip the transition (re-run it when the PR becomes ready). No key
-  found → skip and note it.
+- Already a draft → good. (Ideally the PR was created with `gh pr create --draft`,
+  so even the `opened` event costs nothing.)
+- Marked ready → convert it back to draft now: `gh pr ready <N> --undo`. Everything
+  ship does next is a draft-phase activity.
+
+**Do NOT transition the Jira ticket yet.** In Review is for a ready PR — ship moves
+the ticket to In Review in Step 3, at the same moment it marks the PR ready. (work-on
+owns In Progress; merge-pr owns Done.)
 
 **Stand in the PR's workspace.** Later steps run local verification and `git push`
 from wherever this session sits:
@@ -69,46 +86,68 @@ from wherever this session sits:
   (`EnterWorktree` with that path, or `cd`). Only fall back to
   `git checkout <headRefName>` on the shared checkout when no worktree exists.
 
-## Step 2 — Wait for CI
+## Step 2 — Self code review on the draft (subagent)
+
+Dispatch a subagent that invokes the `code-review` skill against this PR, so ship's
+context stays lean. Apply its valid findings locally. No CI is needed for this — the
+review reads the diff, not a CI run — which is why it happens on the draft before any
+minutes are spent. Batch all fixes per the batch-push rule; do not push per finding.
+
+## Step 3 — Local verify, batch push, mark ready
+
+Before spending the first CI run, reproduce the CI gates locally so the run passes
+first try. Discover the repo's commands (its CLAUDE.md / `package.json` scripts /
+`Makefile`) and run them each as its own step — typically format/lint, type-check,
+unit tests, build; add migration/emoji-compile checks if the repo's CI has them.
+Fix anything they surface (still on the draft, still batched).
+
+Then, in order:
+
+1. **One batched push** of every self-review + verification fix.
+2. `gh pr ready <N>` — this marks the PR ready-for-review and is the single event
+   that first triggers CI (and the bot/Sonar reviewers).
+3. **Now** transition the linked Jira ticket to **In Review** (this is the step
+   nothing else performs): parse the ticket key from the PR's `headRefName`
+   (`[A-Za-z]+-[0-9]+`, case-insensitive, uppercased; fall back to title/body) and
+   transition via `jira-writer:jira-writer` — unless the ticket is already In Review
+   or later; never move a ticket backward. No key found → skip and note it.
+
+## Step 4 — Wait for CI
 
 Watch checks in a background Bash call (`gh pr checks <N> --watch`). Exit code 8
-means checks are still pending — not a failure. Do not start the review until CI is
-green.
+means checks are still pending — not a failure. Do not start the findings loop until
+CI is green. Because Step 3 verified locally first, this run should be green with no
+further pushes.
 
-## Step 3 — Self code review (subagent)
-
-Dispatch a subagent that invokes the `code-review` skill against this PR, so
-ship's context stays lean. Apply its valid findings (fix, verify, push) before
-asking anyone else to look. A push restarts Step 2.
-
-## Step 4 — Findings loop (subagent)
+## Step 5 — Findings loop (subagent)
 
 Dispatch a subagent that invokes the `review-pr-findings` skill for this PR. It owns
 the gather → ledger → adversarial triage → fix/reply → verify/push loop and returns
-when CI is green with no unresolved threads.
+when CI is green with no unresolved threads. Each of its fix rounds is one batched
+push (a legitimate CI re-run only when a real finding needed a code change).
 
 The subagent cannot talk to the user: it returns NEEDS-USER-DECISION findings
 unresolved. Present those to the user with your recommendation, then re-dispatch the
 subagent with the decisions. Repeat until nothing is unresolved.
 
-## Step 5 — Watch until approved (in-session loop)
+## Step 6 — Watch until approved (in-session loop)
 
 **Auto-merge bypass — of the approval WAIT only, never of the gates:** when
 auto-merge is active (flag, user instruction, or config), skip this loop. What is
-bypassed is waiting for a human `APPROVED` review — nothing else. Steps 2–4 are
-non-negotiable prerequisites in every mode: do NOT enter Step 6 unless CI is green,
-the self code review (Step 3) ran and its valid findings were applied, and the
-findings loop (Step 4) finished with every finding — yours and anyone else's —
+bypassed is waiting for a human `APPROVED` review — nothing else. Steps 2–5 are
+non-negotiable prerequisites in every mode: do NOT enter Step 7 unless CI is green,
+the self code review (Step 2) ran and its valid findings were applied, and the
+findings loop (Step 5) finished with every finding — yours and anyone else's —
 resolved and no unresolved threads. If any of that is not true, there is no
 approval signal and nothing merges. When it is all true, run the base-branch sync
-check (item 2) once, then proceed to Step 6 — which, as always, hands off to the
+check (item 2) once, then proceed to Step 7 — which, as always, hands off to the
 `merge-pr` skill; ship never performs the merge itself.
 
 Self-schedule a wakeup roughly every 20 minutes (use the session's scheduled-wakeup
 /loop mechanism; if unavailable, tell the user to re-run `/workstream:ship` to resume —
 the ledger and PR state make resumption idempotent). On each wake:
 
-1. **New feedback?** Gather reviews/comments/checks; if anything new, run Step 4
+1. **New feedback?** Gather reviews/comments/checks; if anything new, run Step 5
    again (findings subagent + ledger).
 2. **Behind the base branch?** Resolve it once
    (`BASE=$(gh pr view <N> --json baseRefName --jq '.baseRefName')`), then
@@ -116,9 +155,9 @@ the ledger and PR state make resumption idempotent). On each wake:
    `origin/$BASE` into the branch and push. Conflicts → stop the loop and escalate
    to the user.
 3. **Approved?** `gh pr view <N> --json reviewDecision` — on `APPROVED` with green
-   CI and no unresolved threads, proceed to Step 6.
+   CI and no unresolved threads, proceed to Step 7.
 
-## Step 6 — Merge (the ONE user checkpoint)
+## Step 7 — Merge (the ONE user checkpoint)
 
 - Ask the user once: "green + reviewed + approved — merge PR <N>?" Skip the question
   when auto-merge is active (flag, explicit "ship it without asking", or the
@@ -136,15 +175,20 @@ the ledger and PR state make resumption idempotent). On each wake:
 
 ## Red flags
 
-- A non-draft PR in ship with the ticket still In Progress — the In Review
-  transition is ship's job, in preflight, before anything else.
-- Running the review before CI is green, or merging before the review ran.
+- Marking a PR ready (or leaving it ready) before the self review has run — the self
+  review belongs on the draft, where its fix pushes cost no CI minutes.
+- Pushing self-review or findings fixes one commit at a time — batch each phase into
+  a single push; every extra push to a ready PR is another full CI run.
+- Transitioning the ticket to In Review while the PR is still a draft — In Review
+  pairs with marking the PR ready in Step 3.
+- Running the findings loop or watching before CI is green, or merging before the
+  review ran.
 - Inlining triage/reply mechanics instead of delegating to `review-pr-findings`.
 - Guessing a NEEDS-USER-DECISION verdict instead of surfacing it.
 - Merging while behind the base branch or with unresolved threads.
 - Waiting for a human PR approval while auto-merge is active — there, CI green +
   all findings resolved IS the approval signal.
-- Treating auto-merge as permission to skip Steps 2–4 — it only skips the approval
+- Treating auto-merge as permission to skip Steps 2–5 — it only skips the approval
   wait; merging with failing CI, an un-run self review, or any unresolved finding
   is never allowed, in any mode.
 - Auto-merging without checking `ship-config.json` when no flag was passed — the

@@ -98,7 +98,11 @@ commands. Then, each as its own step:
 3. Type-check (if the repo has one).
 4. Build (only when the repo's config makes build-only errors likely, e.g. route or
    config changes in a framework with a compile step).
-5. Commit and push.
+5. Commit ALL of this round's fixes, then push **once**.
+
+**One push per round, never per finding.** Fix every VALID finding of the current
+round, verify locally, and push a single time. Each push to a ready PR re-triggers
+the full CI run, so pushing finding-by-finding multiplies CI minutes for no benefit.
 
 Re-run Step 1. New findings triggered by the push go through the same ledger. When
 CI is green and no unresolved threads remain, post ONE short summary comment (2–4
@@ -110,4 +114,5 @@ sentences: what was fixed, what was rejected and why), then report completion.
 - The same finding text appearing in the ledger from a prior round → reply, don't re-fix.
 - "The bot is probably right" → the bot has been wrong; assess it.
 - Running the repo's full test suite instead of targeted paths.
+- Pushing fixes one finding at a time — batch the whole round into a single push.
 - Long approval essay → short notes, always.
