@@ -18,7 +18,9 @@ otherwise the plan implements against a world that no longer exists. **The codeb
 is the source of truth.**
 
 The full lifecycle this skill starts: reconcile → worktree → brainstorm → plan →
-implement → PR → `ship` → `merge-pr`.
+implement → **draft** PR → `ship` → `merge-pr`. The PR is opened as a draft so
+CI (gated on `draft == false`) stays off during ship's self review; ship marks it
+ready-for-review — the single CI trigger — only once the review passes.
 
 ## Steps
 
@@ -90,9 +92,20 @@ moved it; check the current status first.
 Step 2 as input there), then `superpowers:writing-plans`, then plan execution, then
 `superpowers:finishing-a-development-branch` to produce the PR. **For tickets with
 a UI surface:** the brainstorm must present design options as browser-rendered HTML
-mockups with 2–3 variants (ASCII mockups only if the user asks). Once the PR
-exists, continue with the `ship` skill to drive it to merge — ship's preflight
-moves the ticket to In Review the moment the PR is open and non-draft.
+mockups with 2–3 variants (ASCII mockups only if the user asks).
+
+**Create the PR as a draft** — `gh pr create --draft`.
+`superpowers:finishing-a-development-branch` is forge-neutral (it pushes the branch
+but leaves the `gh pr create` to you), so pass `--draft` explicitly; it will not add
+the flag on its own. CI is gated to skip draft PRs (`if: draft == false`), so ship's
+self review and its fix pushes run on the draft for **zero CI minutes**. Ship marks
+the PR ready-for-review only after the review passes — that single transition is what
+first triggers CI. Opening the PR ready instead burns a full CI run before the review
+has even started.
+
+Once the (draft) PR exists, continue with the `ship` skill to drive it to merge —
+ship marks the PR ready after its self review and moves the ticket to In Review at
+that moment.
 
 ## Red flags
 
@@ -106,4 +119,6 @@ moves the ticket to In Review the moment the PR is open and non-draft.
 - Creating the worktree off the current dirty branch instead of the freshly fetched
   default branch.
 - A branch name missing the ticket key → merge-pr can't find the ticket to close.
+- Opening the PR ready-for-review instead of a draft → CI runs before ship's self
+  review even starts; always `gh pr create --draft` (ship marks it ready).
 - Presenting UI design options as ASCII art → browser HTML mockups, always.
