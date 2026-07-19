@@ -93,7 +93,18 @@ context stays lean. Apply its valid findings locally. No CI is needed for this �
 review reads the diff, not a CI run — which is why it happens on the draft before any
 minutes are spent. Batch all fixes per the batch-push rule; do not push per finding.
 
+**This step is a gate on Step 3.** Step 2 is complete only when the self review has
+returned AND every valid finding it raised is fixed and applied locally. Do not
+advance to Step 3 — and therefore do not mark the PR ready — while the review is
+still running or any valid finding is unfixed. A finding that needs a user decision
+blocks the gate: surface it with your recommendation and wait; never mark the PR
+ready with a valid or undecided self-review finding still open.
+
 ## Step 3 — Local verify, batch push, mark ready
+
+**Precondition:** Step 2 is fully complete — the self review returned and every valid
+finding is fixed and applied locally (nothing open, nothing awaiting a user
+decision). If that is not true, go back to Step 2; do not mark the PR ready.
 
 Before spending the first CI run, reproduce the CI gates locally so the run passes
 first try. Discover the repo's commands (its CLAUDE.md / `package.json` scripts /
@@ -175,7 +186,9 @@ the ledger and PR state make resumption idempotent). On each wake:
 
 ## Red flags
 
-- Marking a PR ready (or leaving it ready) before the self review has run — the self
+- Marking a PR ready (or leaving it ready) before the self review has run, while it
+  is still running, or with any valid/undecided self-review finding still open — mark
+  ready only once Step 2 is complete and every fix is applied and pushed. The self
   review belongs on the draft, where its fix pushes cost no CI minutes.
 - Pushing self-review or findings fixes one commit at a time — batch each phase into
   a single push; every extra push to a ready PR is another full CI run.
