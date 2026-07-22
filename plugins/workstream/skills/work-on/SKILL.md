@@ -92,7 +92,11 @@ moved it; check the current status first.
 Step 2 as input there), then `superpowers:writing-plans`, then plan execution, then
 `superpowers:finishing-a-development-branch` to produce the PR. **For tickets with
 a UI surface:** the brainstorm must present design options as browser-rendered HTML
-mockups with 2–3 variants (ASCII mockups only if the user asks).
+mockups with 2–3 variants (ASCII mockups only if the user asks); and the **final
+implementation check, before the draft PR is opened, must drive the built UI in a
+real browser** (Playwright/e2e specs for the touched surface, or the `verify` skill)
+to confirm it renders and behaves as designed — green type-check/unit tests do not
+prove a UI works.
 
 **Create the PR as a draft** — `gh pr create --draft`.
 `superpowers:finishing-a-development-branch` is forge-neutral (it pushes the branch

@@ -112,6 +112,13 @@ first try. Discover the repo's commands (its CLAUDE.md / `package.json` scripts 
 unit tests, build; add migration/emoji-compile checks if the repo's CI has them.
 Fix anything they surface (still on the draft, still batched).
 
+**When the self review's fixes touch UI** (components, styles, layout, ARIA/roles,
+any visual/interactive surface), verification also includes driving the affected
+flow in a real browser — the repo's Playwright/e2e specs for the touched surface,
+or the `verify`/browser-smoke skill. Green lint/tests/type-check/build do not prove
+a UI renders or behaves correctly; they miss render and interaction regressions.
+This runs on the draft too, so it costs zero CI minutes.
+
 Then, in order:
 
 1. **One batched push** of every self-review + verification fix.
@@ -198,6 +205,8 @@ the ledger and PR state make resumption idempotent). On each wake:
   review ran.
 - Inlining triage/reply mechanics instead of delegating to `review-pr-findings`.
 - Guessing a NEEDS-USER-DECISION verdict instead of surfacing it.
+- Marking a UI change ready or "verified" on green lint/tests/type-check alone —
+  drive it in a browser first; those checks miss render/interaction/ARIA regressions.
 - Merging while behind the base branch or with unresolved threads.
 - Waiting for a human PR approval while auto-merge is active — there, CI green +
   all findings resolved IS the approval signal.
