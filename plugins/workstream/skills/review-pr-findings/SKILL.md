@@ -98,7 +98,17 @@ commands. Then, each as its own step:
 3. Type-check (if the repo has one).
 4. Build (only when the repo's config makes build-only errors likely, e.g. route or
    config changes in a framework with a compile step).
-5. Commit ALL of this round's fixes, then push **once**.
+5. **Browser verification — mandatory when the fix touches UI.** If the fix touched
+   a component, styles, layout, ARIA/roles, or any visual/interactive surface,
+   green lint/tests/type-check/build are NOT sufficient proof — they routinely miss
+   render regressions, broken interactions, and accessibility/role changes (exactly
+   the class of bug that trips Sonar a11y rules). Drive the affected flow in a real
+   browser and observe the actual render + behavior: use the repo's Playwright/e2e
+   setup (run only the specs covering the touched surface, never the whole e2e
+   suite), or the `verify` skill / a browser-smoke skill if the repo has one. A UI
+   finding is not "fixed" until this passes — it is a precondition for the Step 5
+   proof-of-fix resolve, not just for CI.
+6. Commit ALL of this round's fixes, then push **once**.
 
 **One push per round, never per finding.** Fix every VALID finding of the current
 round, verify locally, and push a single time. Each push to a ready PR re-triggers
@@ -114,5 +124,7 @@ sentences: what was fixed, what was rejected and why), then report completion.
 - The same finding text appearing in the ledger from a prior round → reply, don't re-fix.
 - "The bot is probably right" → the bot has been wrong; assess it.
 - Running the repo's full test suite instead of targeted paths.
+- Calling a UI fix "verified" on green tests/type-check alone — drive it in a
+  browser; those checks miss render/interaction/ARIA regressions.
 - Pushing fixes one finding at a time — batch the whole round into a single push.
 - Long approval essay → short notes, always.
