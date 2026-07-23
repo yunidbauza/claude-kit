@@ -331,8 +331,55 @@ test_create_issue_empty_positional_arity() {
   pass "create_issue empty positional triggers arity guard"
 }
 
+test_link_issues_direction() {
+  # Mock curl that logs the POST body and returns 201 with an empty body
+  # (what POST /rest/api/3/issueLink actually returns).
+  local mock_dir mock_log
+  mock_dir=$(mktemp -d)
+  mock_log="$mock_dir/body.log"
+  cat > "$mock_dir/curl" <<BASH
+#!/usr/bin/env bash
+prev=""
+for a in "\$@"; do
+  [[ "\$prev" == "--data-raw" ]] && printf '%s\n' "\$a" >> "$mock_log"
+  prev="\$a"
+done
+echo ""
+echo "201"
+exit 0
+BASH
+  chmod +x "$mock_dir/curl"
+  export PATH="$mock_dir:$PATH"
+  export JIRA_DOMAIN="example.atlassian.net"
+  export JIRA_API_KEY="user@example.com:fake-token"
+
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" link_issues HB-1 Blocks HB-2 2>/dev/null)
+  # DIRECTION: arg1 is the OUTWARD issue (carries "blocks"); arg3 is INWARD
+  # ("is blocked by"). Getting this backwards is the classic issue-link bug.
+  jq -e '.type.name == "Blocks" and .outwardIssue.key == "HB-1" and .inwardIssue.key == "HB-2"' \
+    "$mock_log" >/dev/null \
+    || fail "link_issues direction wrong. body: $(cat "$mock_log")"
+  echo "$out" | jq -e '.api == "rest" and .data.success == true' >/dev/null \
+    || fail "link_issues 201 (empty body) should be rest success, got: $out"
+
+  PATH=$(echo "$PATH" | sed -e "s|$mock_dir:||")
+  rm -rf "$mock_dir"
+  pass "link_issues posts correct direction (arg1=outward=blocker)"
+}
+
+test_link_issues_arity() {
+  local out
+  out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" link_issues HB-1 Blocks 2>&1 || true)
+  echo "$out" | grep -q "missing required arguments for link_issues" \
+    || fail "link_issues with 2 args should error, got: $out"
+  pass "link_issues arity guard"
+}
+
 test_validate_adf_flag_order
 test_get_issue_empty_positional_arity
 test_create_issue_empty_positional_arity
+test_link_issues_direction
+test_link_issues_arity
 
 echo "test-wrapper-flags.sh: all pass"

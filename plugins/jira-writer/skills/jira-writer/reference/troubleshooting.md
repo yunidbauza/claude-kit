@@ -88,3 +88,11 @@ Bash tool shell, so it expands to empty and fails.
    and token scope.
 8. **REST vs MCP fallback** — REST preferred; MCP fallback is automatic for simple
    content only. Complex content has no MCP fallback.
+9. **Issue-link direction** — in `link_issues OUT TYPE IN` (and the REST
+   `/issueLink` body) the **outward** issue carries the type's outward
+   description: `link_issues A Blocks B` ⇒ "A blocks B" (B "is blocked by A").
+   Reading `get_issue` output: an `issuelinks` entry containing `inwardIssue: X`
+   means "is blocked by X"; `outwardIssue: Y` means "blocks Y". Beware: the
+   Atlassian MCP `createIssueLink` tool has an open bug that **inverts** the
+   direction (atlassian/atlassian-mcp-server#112) — after creating a link via
+   the MCP fallback, verify with `get_issue` and re-create if reversed.

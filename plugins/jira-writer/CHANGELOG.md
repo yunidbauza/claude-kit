@@ -1,5 +1,27 @@
 # Changelog — jira-writer
 
+## 1.7.0 — 2026-07-23
+
+### Added
+- **`link_issues OUTWARD_KEY LINK_TYPE INWARD_KEY`** — create issue links via
+  REST `POST /rest/api/3/issueLink`. Direction is explicit and verified
+  against Atlassian docs and live link data: the **first argument is the
+  outward issue**, which carries the link type's outward description —
+  `link_issues A Blocks B` ⇒ "A blocks B" (B shows "is blocked by A"). Arg
+  order reads as the sentence. Aliases: `link`, `link_issue`.
+- **`get_link_types`** — list the site's issue link types with their
+  inward/outward wording (REST `GET /rest/api/3/issueLinkType`). Aliases:
+  `link_types`, `linktypes`.
+- MCP fallback for `link_issues` targets `createIssueLink` and carries a
+  prominent warning: Atlassian's MCP tool has an open bug that **inverts**
+  link direction (atlassian/atlassian-mcp-server#112) — verify with
+  `get_issue` after any MCP-created link.
+- `reference/troubleshooting.md` gotcha #9 documenting direction semantics,
+  how to read `issuelinks` entries in `get_issue` output, and the MCP
+  inversion bug.
+- Tests: mock-curl regression test asserting the POST body direction
+  (arg1 = `outwardIssue`), arity guard test, and normalize/alias tests.
+
 ## 1.6.2 — 2026-07-13
 
 Backport of defect fixes found while porting this plugin into the APFM shared

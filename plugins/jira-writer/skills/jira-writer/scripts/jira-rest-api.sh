@@ -238,6 +238,33 @@ jira_get_issue() {
     _jira_parse_response "$response" "200"
 }
 
+# Link two issues.
+# Usage: jira_link_issues OUTWARD_KEY LINK_TYPE_NAME INWARD_KEY
+# DIRECTION: the outward issue carries the link type's outward description —
+# jira_link_issues A Blocks B  ⇒  "A blocks B" (B shows "is blocked by A").
+jira_link_issues() {
+    local outward_key="$1" link_type="$2" inward_key="$3"
+
+    jira_check_credentials || return 1
+
+    local data
+    data=$(jq -n --arg type "$link_type" --arg out "$outward_key" --arg in "$inward_key" \
+        '{type: {name: $type}, outwardIssue: {key: $out}, inwardIssue: {key: $in}}')
+
+    local response
+    response=$(_jira_post "/rest/api/3/issueLink" "$data")
+    _jira_parse_response "$response" "201"
+}
+
+# List available issue link types (name + inward/outward descriptions).
+jira_get_link_types() {
+    jira_check_credentials || return 1
+
+    local response
+    response=$(_jira_get "/rest/api/3/issueLinkType")
+    _jira_parse_response "$response" "200"
+}
+
 # Create a new issue
 # Usage: jira_create_issue '{"fields": {...}}'
 jira_create_issue() {
