@@ -159,14 +159,29 @@ _input_was_adf() {
     printf '%s' "$input" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1
 }
 
+# _md_fallback_note MD — the note attached to MCP fallbacks that carry the
+# original markdown instead of converted ADF. Warns when the content uses
+# constructs the MCP renders as plain text (checkboxes, images, mermaid).
+_md_fallback_note() {
+    local md="${1:-}"
+    local note="Content passed as original markdown — MCP renders markdown natively."
+    if [[ "$md" == *"- ["* || "$md" == *"!["* || "$md" == *'```mermaid'* ]]; then
+        note+=" WARNING: it contains checkboxes/images/diagrams, which the MCP renders as plain text — REST is required for those to render."
+    fi
+    echo "$note"
+}
+
 # _parse_flags KNOWN_CSV -- "$@"
 # Splits "$@" into:
 #   _POSITIONAL=(...)   positional args
 #   _FLAGS=(name=val ...) single-value flags
 #   _BOOLS=(name ...)     boolean (value-less) flags
-# KNOWN_CSV is a comma-separated list of long flag names. Single-value vs
-# boolean is determined by lookahead: if the next token starts with -- or is
-# absent, treat as boolean. Unknown flags pass through as positional args.
+# KNOWN_CSV is a comma-separated list of long flag names. Whether a known
+# flag is boolean or single-value is decided by the hardcoded bool list
+# below (markdown, bisect, summary-only); value flags consume the next
+# token. Unknown letter-led --flags are a hard error (typo protection);
+# non-letter tokens like "---" pass through as positionals. Duplicate
+# value flags: last one wins.
 _parse_flags() {
     local known_csv="$1"; shift
     [[ "${1:-}" == "--" ]] && shift
@@ -176,6 +191,13 @@ _parse_flags() {
     local known=",$known_csv,"
     while [[ $# -gt 0 ]]; do
         local arg="$1"
+        # A lone -- is the conventional end-of-flags marker: everything after
+        # it is positional data, even flag-shaped tokens like "--markdown".
+        if [[ "$arg" == "--" ]]; then
+            shift
+            _POSITIONAL+=("$@")
+            return 0
+        fi
         if [[ "$arg" == --* ]]; then
             local name="${arg#--}"
             if [[ "$known" == *",$name,"* ]]; then
@@ -192,6 +214,17 @@ _parse_flags() {
                     shift 2
                 fi
             else
+                # Unknown flag-shaped token: hard error instead of silently
+                # absorbing it as a positional (a typo like --dsc-file would
+                # otherwise become the literal issue description). Only
+                # whitespace-free tokens count as flag-shaped — multi-word
+                # data that happens to start with "--word " passes through,
+                # as do non-letter tokens like "---". Data that is exactly
+                # flag-shaped can be passed after a lone "--".
+                if [[ "$arg" == --[a-zA-Z]* && ! "$arg" =~ [[:space:]] ]]; then
+                    echo "Error: unknown flag $arg (known: ${known_csv//,/, }; use a lone -- before data that starts with --)" >&2
+                    return 2
+                fi
                 _POSITIONAL+=("$arg")
                 shift
             fi
@@ -203,13 +236,15 @@ _parse_flags() {
 }
 
 # _flag_value NAME — echoes the value of the named single-value flag, or "" if absent.
+# Duplicates resolve last-wins (standard CLI convention).
 _flag_value() {
-    local name="$1" entry
+    local name="$1" entry val=""
     # ${arr[@]+...} yields zero words for an empty array (":-" would yield
     # one empty word) while staying set -u safe.
     for entry in ${_FLAGS[@]+"${_FLAGS[@]}"}; do
-        [[ "$entry" == "$name="* ]] && { echo "${entry#*=}"; return 0; }
+        [[ "$entry" == "$name="* ]] && val="${entry#*=}"
     done
+    echo "$val"
     return 0
 }
 
@@ -332,8 +367,10 @@ _validate_adf_or_error() {
             path=""
             msg="$result"
         fi
+        # Empty path becomes null, matching op_validate_adf's envelope shape.
         jq -n --arg op "$op" --arg rule "$rule" --arg path "$path" --arg msg "$msg" \
-            '{api:"error", operation:$op, rule:$rule, path:$path, error:$msg}'
+            '{api:"error", operation:$op, rule:$rule,
+              path:(if $path == "" then null else $path end), error:$msg}'
         return 1
     fi
     return 0
@@ -373,6 +410,45 @@ op_create_issue() {
     local desc_file="$(_flag_value desc-file)"
     local markdown_bool="0"; _has_bool markdown && markdown_bool="1"
 
+    local parent_key="$(_flag_value parent)"
+    if [[ -n "$parent_key" ]]; then
+        if ! [[ "$parent_key" =~ ^[A-Z][A-Z0-9_]+-[0-9]+$ ]]; then
+            jq -n --arg op "create_issue" --arg p "$parent_key" \
+              '{api:"error", operation:$op, error:("--parent must match ^[A-Z][A-Z0-9_]+-[0-9]+$ — got: " + $p)}'
+            return 1
+        fi
+    fi
+
+    # No-creds MCP fallback comes BEFORE markdown→ADF conversion: the fallback
+    # only needs the original markdown, so MCP-only users without Node still
+    # get a working envelope. Params use the createJiraIssue tool shape.
+    if [[ "${JIRA_WRITER_DRY_RUN:-}" != "1" ]] && ! check_rest_available; then
+        local _mcp_desc="$description" _note=""
+        if [[ -n "$desc_file" ]]; then
+            if [[ ! -r "$desc_file" ]]; then
+                jq -n --arg op "create_issue" '{api:"error", operation:$op, error:"--desc-file path not readable"}'
+                return 1
+            fi
+            _mcp_desc="$(cat "$desc_file")"
+        fi
+        if [[ -n "$desc_file" || "$markdown_bool" == "1" ]]; then
+            _note="$(_md_fallback_note "$_mcp_desc")"
+        elif [[ -n "$description" ]] && _input_was_adf "$description"; then
+            _note="Original description was ADF; MCP fallback will render as text."
+        fi
+        local _mcp_params
+        _mcp_params=$(jq -n \
+            --arg project "$project_key" \
+            --arg type "$issue_type" \
+            --arg summary "$summary" \
+            --arg desc "$_mcp_desc" \
+            --arg parent "$parent_key" \
+            '{projectKey: $project, issueTypeName: $type, summary: $summary, description: $desc}
+             + (if $parent != "" then {parent: $parent} else {} end)')
+        output_mcp_fallback "createJiraIssue" "$_mcp_params" "REST credentials not configured" "$_note"
+        return 1
+    fi
+
     local desc_adf=""
     if [[ -n "$description" || -n "$desc_file" || "$markdown_bool" == "1" ]]; then
         desc_adf=$(_resolve_content_input "$description" "$desc_file" "$markdown_bool") || {
@@ -389,15 +465,6 @@ op_create_issue() {
     fi
     if [[ "$_is_adf" == "1" && -n "$desc_adf" ]]; then
         _validate_adf_or_error "$desc_adf" "create_issue" || return 1
-    fi
-
-    local parent_key="$(_flag_value parent)"
-    if [[ -n "$parent_key" ]]; then
-        if ! [[ "$parent_key" =~ ^[A-Z][A-Z0-9_]+-[0-9]+$ ]]; then
-            jq -n --arg op "create_issue" --arg p "$parent_key" \
-              '{api:"error", operation:$op, error:("--parent must match ^[A-Z][A-Z0-9_]+-[0-9]+$ — got: " + $p)}'
-            return 1
-        fi
     fi
 
     local issue_data
@@ -427,14 +494,7 @@ op_create_issue() {
         return 0
     fi
 
-    # Check REST availability
-    if ! check_rest_available; then
-        local _note=""
-        [[ -n "$description" ]] && _input_was_adf "$description" \
-            && _note="Original description was ADF; MCP fallback will render as text."
-        output_mcp_fallback "createJiraIssue" "$issue_data" "REST credentials not configured" "$_note"
-        return 1
-    fi
+    # The no-creds case was handled before conversion above; creds exist here.
 
     # Try REST API
     local result
@@ -442,29 +502,31 @@ op_create_issue() {
         output_rest_success "$result"
         return 0
     else
-        if [[ "$_is_adf" == "1" ]]; then
+        # When the description came from markdown, the MCP fallback IS viable
+        # with the lossless original — only hand-built ADF has no retry path.
+        if [[ "$_is_adf" == "1" && -z "$desc_file" && "$markdown_bool" != "1" ]]; then
             log_error "REST create failed: $result"
             jq -n --arg op "create_issue" --arg project "$project_key" --arg type "$issue_type" --arg summary "$summary" --arg err "$result" \
                 '{api:"error", operation:$op, params:{projectKey:$project, issueTypeName:$type, summary:$summary}, rest_error:$err,
                   note:"REST failed for ADF input — MCP fallback not viable."}'
             return 1
         fi
-        # Fall back params for MCP
+        local _mcp_desc="$description" _note=""
+        if [[ -n "$desc_file" ]]; then
+            _mcp_desc="$(cat "$desc_file")"
+        fi
+        if [[ -n "$desc_file" || "$markdown_bool" == "1" ]]; then
+            _note="$(_md_fallback_note "$_mcp_desc")"
+        fi
         local mcp_params
         mcp_params=$(jq -n \
             --arg project "$project_key" \
             --arg type "$issue_type" \
             --arg summary "$summary" \
-            --arg desc "$description" \
-            '{
-                projectKey: $project,
-                issueTypeName: $type,
-                summary: $summary,
-                description: $desc
-            }')
-        local _note=""
-        [[ -n "$description" ]] && _input_was_adf "$description" \
-            && _note="Original description was ADF; MCP fallback will render as text."
+            --arg desc "$_mcp_desc" \
+            --arg parent "$parent_key" \
+            '{projectKey: $project, issueTypeName: $type, summary: $summary, description: $desc}
+             + (if $parent != "" then {parent: $parent} else {} end)')
         output_mcp_fallback "createJiraIssue" "$mcp_params" "$result" "$_note"
         return 1
     fi
@@ -475,6 +537,9 @@ op_update_issue() {
     local issue_key="$1"
     local fields_json="$2"
     local is_adf_input="${3:-0}"
+    # Original markdown source (when the description came from
+    # --markdown/--desc-file) — preferred by the no-creds MCP fallback.
+    local orig_md="${4:-}"
 
     # Validate JSON input before anything else so the error returns regardless
     # of credential state.
@@ -503,9 +568,19 @@ op_update_issue() {
     mcp_params=$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" \
         '{issueIdOrKey: $key, fields: $fields}')
 
-    # Check REST availability
+    # Check REST availability. Prefer the original markdown for the fallback
+    # description (MCP renders markdown natively); otherwise warn when the
+    # fields carry ADF the MCP would render as text.
     if ! check_rest_available; then
-        output_mcp_fallback "editJiraIssue" "$mcp_params" "REST credentials not configured"
+        local _note="" _mcp_params_nc="$mcp_params"
+        if [[ -n "$orig_md" ]]; then
+            _mcp_params_nc=$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" --arg md "$orig_md" \
+                '{issueIdOrKey: $key, fields: ($fields + {description: $md})}')
+            _note="$(_md_fallback_note "$orig_md")"
+        elif [[ "$is_adf_input" == "1" ]]; then
+            _note="Fields contain ADF; MCP fallback will render as text."
+        fi
+        output_mcp_fallback "editJiraIssue" "$_mcp_params_nc" "REST credentials not configured" "$_note"
         return 1
     fi
 
@@ -524,6 +599,15 @@ op_update_issue() {
         fi
         return 0
     else
+        # When the description came from markdown, the MCP fallback IS viable
+        # with the lossless original — only hand-built ADF has no retry path.
+        if [[ -n "$orig_md" ]]; then
+            local _mp_fail
+            _mp_fail=$(jq -n --arg key "$issue_key" --argjson fields "$fields_json" --arg md "$orig_md" \
+                '{issueIdOrKey: $key, fields: ($fields + {description: $md})}')
+            output_mcp_fallback "editJiraIssue" "$_mp_fail" "$result" "$(_md_fallback_note "$orig_md")"
+            return 1
+        fi
         if [[ "$is_adf_input" == "1" ]]; then
             log_error "REST update failed: $result"
             jq -n --arg op "update_issue" --arg key "$issue_key" --arg err "$result" \
@@ -541,13 +625,24 @@ op_add_comment() {
     local issue_key="$1"
     local comment_body="$2"
     local is_adf_input="${3:-0}"
+    # Original markdown source (when body came from --markdown/--desc-file):
+    # the MCP renders markdown natively, so the no-creds fallback prefers it
+    # over the converted ADF, which MCP would dump as raw text.
+    local orig_md="${4:-}"
 
     # Check REST availability
     if ! check_rest_available; then
-        local _note=""
-        _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
+        local _note="" _mcp_body="$comment_body"
+        if [[ -n "$orig_md" ]]; then
+            _mcp_body="$orig_md"
+            _note="$(_md_fallback_note "$orig_md")"
+        elif [[ "$is_adf_input" == "1" ]]; then
+            # Gate on the caller-computed flag, matching op_update_issue —
+            # the two ops previously derived this differently and had drifted.
+            _note="Original body was ADF; MCP fallback will render as text."
+        fi
         output_mcp_fallback "addCommentToJiraIssue" \
-            "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" \
+            "$(jq -n --arg key "$issue_key" --arg body "$_mcp_body" '{issueIdOrKey: $key, commentBody: $body}')" \
             "REST credentials not configured" \
             "$_note"
         return 1
@@ -571,6 +666,15 @@ op_add_comment() {
         output_rest_success "$result"
         return 0
     else
+        # Markdown-sourced bodies retry via MCP with the lossless original;
+        # only hand-built ADF has no retry path.
+        if [[ -n "$orig_md" ]]; then
+            output_mcp_fallback "addCommentToJiraIssue" \
+                "$(jq -n --arg key "$issue_key" --arg body "$orig_md" '{issueIdOrKey: $key, commentBody: $body}')" \
+                "$result" \
+                "$(_md_fallback_note "$orig_md")"
+            return 1
+        fi
         if [[ "$is_adf_input" == "1" ]]; then
             log_error "REST add_comment failed: $result"
             jq -n --arg op "add_comment" --arg key "$issue_key" --arg err "$result" \
@@ -578,12 +682,11 @@ op_add_comment() {
                   note:"REST failed for ADF input — MCP fallback not viable."}'
             return 1
         fi
-        local _note=""
-        _input_was_adf "$comment_body" && _note="Original body was ADF; MCP fallback will render as text."
+        # is_adf_input is 0 on this path (the ADF case returned above), so no
+        # ADF-degradation note applies — the body is plain text.
         output_mcp_fallback "addCommentToJiraIssue" \
             "$(jq -n --arg key "$issue_key" --arg body "$comment_body" '{issueIdOrKey: $key, commentBody: $body}')" \
-            "$result" \
-            "$_note"
+            "$result"
         return 1
     fi
 }
@@ -817,7 +920,7 @@ op_link_issues() {
 
     local mcp_params _note
     mcp_params=$(jq -n --arg type "$link_type" --arg out "$outward_key" --arg in "$inward_key" \
-        '{linkType: $type, outwardIssueKey: $out, inwardIssueKey: $in}')
+        '{type: $type, outwardIssue: $out, inwardIssue: $in}')
     _note="WARNING: the Atlassian MCP createIssueLink tool has an open bug that INVERTS link direction (atlassian/atlassian-mcp-server#112). If you create the link via MCP, verify the direction afterwards with get_issue and re-create if reversed."
 
     # Check REST availability
@@ -1173,7 +1276,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                 exit 1
             fi
             if _has_bool summary-only; then
-                op_get_issue "$1" "summary,issuetype,parent,status,assignee"
+                # Docs advertise KEY [FIELDS] [--summary-only] as combinable:
+                # a user-supplied FIELDS list is unioned with the summary set,
+                # not silently discarded.
+                op_get_issue "$1" "summary,issuetype,parent,status,assignee${2:+,$2}"
             else
                 op_get_issue "$@"
             fi
@@ -1181,6 +1287,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
         create_issue)
             _parse_flags "desc-file,markdown,parent" -- "$@"
             if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
+            # Two positionals = PROJECT SUMMARY with the documented Task
+            # default filled in (SKILL.md: "Default issue type is Task").
+            if [[ $# -eq 2 ]]; then
+                set -- "$1" "Task" "$2"
+            fi
             if [[ $# -lt 3 ]]; then
                 echo "Error: missing required arguments for create_issue" >&2
                 echo "Usage: $(_usage_for_op create_issue)" >&2
@@ -1204,36 +1315,45 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                     exit 1
                 fi
                 _key="$1"
+                _orig_md=""
                 if [[ -n "$_df" ]]; then
-                    # --desc-file: the description body comes from the file. The
-                    # positional FIELDS_JSON ($2), when supplied, carries any
-                    # OTHER fields (e.g. a summary rename) and is MERGED with the
-                    # resolved description — so "rename + rewrite body" is a
-                    # single call instead of two. The file body wins on the
-                    # .description key. (--desc-file takes precedence over
-                    # --markdown: the file is markdown-converted regardless.)
-                    _adf=$(_resolve_content_input "" "$_df" "0") || {
-                        jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
+                    if [[ ! -r "$_df" ]]; then
+                        jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"--desc-file path not readable"}'
                         exit 1
-                    }
-                    _base="{}"
-                    if [[ -n "${2:-}" ]]; then
-                        if printf '%s' "$2" | jq -e 'type == "object"' >/dev/null 2>&1; then
-                            _base="$2"
-                        else
-                            log_warn "update_issue: positional FIELDS_JSON is not a JSON object; ignoring: $2"
-                        fi
                     fi
-                    _fields=$(jq -n --argjson base "$_base" --argjson desc "$_adf" '$base + {description: $desc}')
+                    _orig_md="$(cat "$_df")"
                 else
-                    # --markdown only: the positional body ($2) is markdown → description ADF.
-                    _adf=$(_resolve_content_input "${2:-}" "" "1") || {
+                    _orig_md="${2:-}"
+                fi
+                # Merge base fields: with --desc-file, the positional FIELDS_JSON
+                # ($2) carries any OTHER fields (e.g. a summary rename) and is
+                # merged with the description — "rename + rewrite body" in one
+                # call. (--desc-file takes precedence over --markdown.)
+                _base="{}"
+                if [[ -n "$_df" && -n "${2:-}" ]]; then
+                    if printf '%s' "$2" | jq -e 'type == "object"' >/dev/null 2>&1; then
+                        _base="$2"
+                    else
+                        log_warn "update_issue: positional FIELDS_JSON is not a JSON object; ignoring: $2"
+                    fi
+                fi
+                if ! check_rest_available; then
+                    # No creds: the MCP fallback only needs the original
+                    # markdown, so skip the Node-based ADF conversion entirely
+                    # (works on MCP-only setups without Node).
+                    op_update_issue "$_key" "$_base" "1" "$_orig_md"
+                else
+                    if [[ -n "$_df" ]]; then
+                        _adf=$(_resolve_content_input "" "$_df" "0")
+                    else
+                        _adf=$(_resolve_content_input "${2:-}" "" "1")
+                    fi || {
                         jq -n --arg op "update_issue" '{api:"error", operation:$op, error:"failed to resolve description input"}'
                         exit 1
                     }
-                    _fields=$(jq -n --argjson desc "$_adf" '{description: $desc}')
+                    _fields=$(jq -n --argjson base "$_base" --argjson desc "$_adf" '$base + {description: $desc}')
+                    op_update_issue "$_key" "$_fields" "1" "$_orig_md"
                 fi
-                op_update_issue "$_key" "$_fields" "1"
             else
                 if [[ $# -lt 2 ]]; then
                     echo "Error: missing required arguments for update_issue" >&2
@@ -1241,11 +1361,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                     exit 1
                 fi
                 _is_adf="0"
-                # If the fields_json contains an ADF doc as .description, treat as ADF input
-                # Mirrors _ADF_DOC_JQ_FILTER but inspects .description inside a fields_json
-                # wrapper instead of the top-level input. Keep in sync if _ADF_DOC_JQ_FILTER
-                # changes.
-                if [[ -n "${2:-}" ]] && echo "$2" | jq -e '.description | (type == "object" and .type == "doc" and (.version | type) == "number" and (.content | type) == "array")' >/dev/null 2>&1; then
+                # If the fields_json contains an ADF doc as .description, treat
+                # as ADF input — same predicate as _input_was_adf, applied one
+                # level down inside the fields wrapper.
+                if [[ -n "${2:-}" ]] && echo "$2" | jq -e ".description | $_ADF_DOC_JQ_FILTER" >/dev/null 2>&1; then
                     _is_adf="1"
                 fi
                 op_update_issue "$1" "$2" "$_is_adf"
@@ -1263,11 +1382,27 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                     exit 1
                 fi
                 _key="$1"
-                _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
-                    jq -n --arg op "add_comment" '{api:"error", operation:$op, error:"failed to resolve comment body"}'
-                    exit 1
-                }
-                op_add_comment "$_key" "$_adf" "1"
+                _orig_md=""
+                if [[ -n "$_df" ]]; then
+                    if [[ ! -r "$_df" ]]; then
+                        jq -n --arg op "add_comment" '{api:"error", operation:$op, error:"--desc-file path not readable"}'
+                        exit 1
+                    fi
+                    _orig_md="$(cat "$_df")"
+                else
+                    _orig_md="${2:-}"
+                fi
+                if ! check_rest_available; then
+                    # No creds: the MCP fallback only needs the original
+                    # markdown — skip the Node-based ADF conversion entirely.
+                    op_add_comment "$_key" "" "1" "$_orig_md"
+                else
+                    _adf=$(_resolve_content_input "${2:-}" "$_df" "$_md") || {
+                        jq -n --arg op "add_comment" '{api:"error", operation:$op, error:"failed to resolve comment body"}'
+                        exit 1
+                    }
+                    op_add_comment "$_key" "$_adf" "1" "$_orig_md"
+                fi
             else
                 if [[ $# -lt 2 ]]; then
                     echo "Error: missing required arguments for add_comment" >&2

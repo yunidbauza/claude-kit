@@ -233,7 +233,7 @@ unset JIRA_DOMAIN JIRA_API_KEY
 
 # --- add_comment with ADF body when REST credentials missing ---
 adf_in='{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"hi"}]}]}'
-out=$(op_add_comment PROJ-1 "$adf_in" 2>/dev/null) || true
+out=$(op_add_comment PROJ-1 "$adf_in" "1" 2>/dev/null) || true
 note=$(printf '%s' "$out" | jq -r '.note // empty')
 if [[ -n "$note" ]]; then
     PASS=$((PASS + 1))
@@ -279,7 +279,7 @@ jira_add_comment() {
 }
 
 adf_in='{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"hi"}]}]}'
-out=$(op_add_comment PROJ-1 "$adf_in" 2>/dev/null) || true
+out=$(op_add_comment PROJ-1 "$adf_in" "1" 2>/dev/null) || true
 note=$(printf '%s' "$out" | jq -r '.note // empty')
 if [[ -n "$note" ]]; then
     PASS=$((PASS + 1))

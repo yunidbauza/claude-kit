@@ -32,6 +32,10 @@ function inlineTokens(tokens) {
       const inner = inlineTokens(t.tokens);
       for (const n of inner) addMark(n, { type: 'em' });
       out.push(...inner);
+    } else if (t.type === 'del') {
+      const inner = inlineTokens(t.tokens);
+      for (const n of inner) addMark(n, { type: 'strike' });
+      out.push(...inner);
     } else if (t.type === 'codespan') {
       out.push({ type: 'text', text: unescapeHtml(t.text), marks: [{ type: 'code' }] });
     } else if (t.type === 'link') {
@@ -49,26 +53,60 @@ function inlineTokens(tokens) {
   return out;
 }
 
+// tokenToAdf may return a single node or an array (taskList with trailing
+// nested blocks) — this flattens either shape into a block list.
+function blocksFromTokens(tokens) {
+  return (tokens || []).flatMap(t => {
+    const r = tokenToAdf(t);
+    return r ? (Array.isArray(r) ? r : [r]) : [];
+  });
+}
+
 function listItem(item) {
-  const blocks = (item.tokens || [])
-    .map(t => t.type === 'text' ? { type: 'paragraph', content: inlineTokens(t.tokens || [{ type: 'text', text: t.text }]) } : tokenToAdf(t))
-    .filter(Boolean);
+  const blocks = (item.tokens || []).flatMap(t => {
+    if (t.type === 'text') return [{ type: 'paragraph', content: inlineTokens(t.tokens || [{ type: 'text', text: t.text }]) }];
+    const r = tokenToAdf(t);
+    return r ? (Array.isArray(r) ? r : [r]) : [];
+  });
   return { type: 'listItem', content: blocks.length ? blocks : [{ type: 'paragraph', content: [] }] };
 }
 
 function taskList(items) {
-  return {
-    type: 'taskList',
-    attrs: { localId: randomUUID() },
-    content: items.map(it => {
-      const inner = (it.tokens || []).find(t => t.type === 'text');
-      return {
-        type: 'taskItem',
-        attrs: { localId: randomUUID(), state: it.checked ? 'DONE' : 'TODO' },
-        content: inner ? inlineTokens(inner.tokens || [{ type: 'text', text: inner.text }]) : [],
-      };
-    }),
-  };
+  // ADF taskItem content is inline-only, so nested/follow-on blocks under a
+  // task item (sublists, extra paragraphs — marked emits follow-on paragraphs
+  // as additional 'text' tokens) can't live inside the item. They are emitted
+  // immediately after the taskList segment containing their item, splitting
+  // the list to preserve reading order; nothing is dropped.
+  const out = [];
+  let current = null;
+  const flush = () => { if (current) out.push(current); current = null; };
+  for (const it of items) {
+    const toks = it.tokens || [];
+    const inner = toks.find(t => t.type === 'text');
+    if (!current) current = { type: 'taskList', attrs: { localId: randomUUID() }, content: [] };
+    current.content.push({
+      type: 'taskItem',
+      attrs: { localId: randomUUID(), state: it.checked ? 'DONE' : 'TODO' },
+      content: inner ? inlineTokens(inner.tokens || [{ type: 'text', text: inner.text }]) : [],
+    });
+    const trailing = [];
+    for (const t of toks) {
+      if (t === inner) continue;
+      if (t.type === 'text') {
+        // Follow-on paragraph inside the item — same handling as listItem.
+        trailing.push({ type: 'paragraph', content: inlineTokens(t.tokens || [{ type: 'text', text: t.text }]) });
+        continue;
+      }
+      const r = tokenToAdf(t);
+      if (r) trailing.push(...(Array.isArray(r) ? r : [r]));
+    }
+    if (trailing.length) {
+      flush();
+      out.push(...trailing);
+    }
+  }
+  flush();
+  return out.length === 1 ? out[0] : out;
 }
 
 function tokenToAdf(token) {
@@ -90,11 +128,13 @@ function tokenToAdf(token) {
     case 'code':
       return {
         type: 'codeBlock',
-        attrs: { language: token.lang || null },
+        // language must be a string when present — omit attrs entirely for
+        // unlabeled fences rather than emitting language: null.
+        ...(token.lang ? { attrs: { language: token.lang } } : {}),
         content: token.text ? [{ type: 'text', text: token.text + (token.text.endsWith('\n') ? '' : '\n') }] : [],
       };
     case 'blockquote':
-      return { type: 'blockquote', content: (token.tokens || []).map(tokenToAdf).filter(Boolean) };
+      return { type: 'blockquote', content: blocksFromTokens(token.tokens) };
     case 'hr':
       return { type: 'rule' };
     case 'table': {
@@ -114,7 +154,13 @@ function tokenToAdf(token) {
           content: [{ type: 'paragraph', content: inlineTokens(cell.tokens) }],
         })),
       }));
-      return { type: 'table', content: [headerRow, ...bodyRows] };
+      // Canonical table attrs per reference/adf.md (and the repo's
+      // adf-helpers.mjs) — previously omitted here, diverging from both.
+      return {
+        type: 'table',
+        attrs: { isNumberColumnEnabled: false, layout: 'default' },
+        content: [headerRow, ...bodyRows],
+      };
     }
     case 'space':
       return null;
@@ -128,7 +174,7 @@ export function convertMarkdown(md) {
   return {
     type: 'doc',
     version: 1,
-    content: tokens.map(tokenToAdf).filter(Boolean),
+    content: blocksFromTokens(tokens),
   };
 }
 
