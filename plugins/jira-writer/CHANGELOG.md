@@ -1,5 +1,74 @@
 # Changelog — jira-writer
 
+## 1.8.0 — 2026-07-24
+
+Backport of three adversarial-review rounds run against the jira-mate port
+(aplaceformom/claude-skills PR #48). The APFM-specific `JIRA_DOMAIN` default
+was again NOT backported — this plugin stays site-agnostic.
+
+### Fixed
+- **Converter data loss (three classes).** `~~strikethrough~~` text was
+  deleted outright (no `del` token case — now a `strike` mark); nested
+  blocks under task items were dropped; and follow-on paragraphs inside
+  task items (marked emits them as extra `text` tokens) were dropped. The
+  taskList now splits at items with nested/follow-on content so trailing
+  blocks land right after their item — nothing dropped, reading order kept.
+- **Batch upload exited 1 on every run** — the EXIT trap referenced a
+  `local` that is out of scope when the trap fires; under `set -u` even a
+  fully successful run exited 1 and leaked its temp file.
+- **Batch edge cases:** BSD `seq` counts down on empty arrays (two bogus
+  renders of the literal string "null"); non-array `diagrams_json` crashed
+  mid-loop. Now a C-style loop + up-front array validation, and results
+  report the child's **normalized filename** (sanitize + `.png`), not the
+  raw input.
+- **Typo'd flags silently corrupted payloads** — `--dsc-file` became the
+  literal issue description. Unknown whitespace-free letter-led `--flags`
+  are now a hard error (exit 2, known-flags list shown); multi-word data
+  starting with `--word ` still passes, and a lone `--` is honored as the
+  conventional end-of-flags marker. Duplicate value flags resolve
+  last-wins.
+- **`get_issue KEY FIELDS --summary-only`** silently discarded the FIELDS
+  positional despite the documented signature — now unioned.
+- **Mermaid input routing:** literal code colliding with a same-named file
+  in the cwd was silently read from disk. A path must now be
+  whitespace-free; args with spaces/newlines are always treated as code
+  (documented in usage + reference/mermaid.md).
+- **`create_issue` MCP fallbacks** used the REST `fields` envelope instead
+  of the createJiraIssue param shape, and dropped `--parent` (the tool has
+  a top-level `parent` param). Both fixed.
+- **Documented `Task` default implemented** — `create_issue PROJECT
+  SUMMARY` (2 positionals) now creates a Task, as SKILL.md promised.
+
+### Changed
+- **Markdown-first MCP fallbacks, symmetric across branches.** When the
+  content came from `--markdown`/`--desc-file`, both the no-creds AND the
+  REST-failure paths now emit `mcp_fallback` carrying the lossless
+  original markdown (MCP renders markdown natively) instead of converted
+  ADF or a spurious "fallback not viable" error; only hand-built ADF keeps
+  the no-retry `api:"error"`. A shared `_md_fallback_note` helper warns
+  when the markdown contains checkboxes/images/diagrams the MCP renders as
+  plain text.
+- **No-creds `--markdown`/`--desc-file` paths no longer require Node** —
+  the ADF conversion is skipped when the MCP fallback is the destination.
+- **Mermaid upload delegates to the shared `jira_upload_attachment`** —
+  one implementation of sanitization, auth, and the attachments endpoint
+  (also guards against a missing attachment id and gates ANSI colors).
+- **Converter shape alignment:** table nodes carry the canonical
+  `{isNumberColumnEnabled, layout}` attrs documented in reference/adf.md;
+  unlabeled code fences omit `attrs` instead of emitting `language: null`.
+- `doctor` reports a missing jq in static JSON instead of dying on `jq -n`;
+  `get_remote_links`/`test_connection` documented in SKILL.md; consistency
+  cleanups (ADF-note gating unified on `is_adf_input`, `$_ADF_DOC_JQ_FILTER`
+  reused in the update dispatch, validator-crash envelopes agree on
+  `path: null`).
+
+### Tests
+- 12 new/updated: strikethrough, loose task items, taskList splitting,
+  table attrs, code-fence attrs (converter); unknown-flag error, multi-word
+  dash data, `--` end-of-flags, last-wins duplicates, Task default,
+  markdown-carrying update fallbacks (wrapper); dispatch ADF-note tests
+  pass the `is_adf_input` flag the real dispatcher computes.
+
 ## 1.7.0 — 2026-07-23
 
 ### Added

@@ -55,6 +55,8 @@ If exit code non-zero, report the error and skip the diagram.
 ```bash
 # Single diagram: convert to PNG and upload
 jira-writer mermaid <issue_key> <mermaid_file_or_code> [filename]
+# A file path must contain no whitespace — args with spaces/newlines are
+# always treated as mermaid code.
 # Returns: { "attachment_id": "...", "content_url": "...", "filename": "..." }
 
 # Multiple diagrams in one call

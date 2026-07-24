@@ -170,3 +170,40 @@ test('table becomes table > tableRow > tableHeader/tableCell', async () => {
   assert.equal(firstBody.content[0].type, 'tableCell');
   assert.deepEqual(firstBody.content[0].attrs, {});
 });
+
+test('strikethrough text keeps its content with a strike mark', async () => {
+  const adf = await convert('This is ~~struck~~ text');
+  const texts = JSON.stringify(adf);
+  assert.ok(texts.includes('struck'), 'struck text must not be dropped');
+  const struck = adf.content[0].content.find(n => (n.marks || []).some(m => m.type === 'strike'));
+  assert.equal(struck.text, 'struck');
+});
+
+test('loose task item: follow-on paragraph is preserved after the taskList segment', async () => {
+  const adf = await convert('- [ ] task two\n\n  extra paragraph under two\n');
+  const texts = JSON.stringify(adf);
+  assert.ok(texts.includes('extra paragraph under two'), 'follow-on paragraph must not be dropped');
+  const types = adf.content.map(n => n.type);
+  assert.deepEqual(types, ['taskList', 'paragraph']);
+});
+
+test('task item with nested list: taskList splits to preserve reading order', async () => {
+  const adf = await convert('- [ ] one\n  - nested\n- [ ] two\n');
+  const types = adf.content.map(n => n.type);
+  assert.deepEqual(types, ['taskList', 'bulletList', 'taskList']);
+  const texts = JSON.stringify(adf);
+  assert.ok(texts.includes('nested'));
+});
+
+test('table nodes carry canonical attrs', async () => {
+  const adf = await convert('| a |\n|---|\n| 1 |');
+  const table = adf.content.find(n => n.type === 'table');
+  assert.deepEqual(table.attrs, { isNumberColumnEnabled: false, layout: 'default' });
+});
+
+test('unlabeled code fence omits attrs; labeled carries language', async () => {
+  const adf = await convert('```\nplain\n```\n\n```bash\nlabeled\n```');
+  const [plain, labeled] = adf.content.filter(n => n.type === 'codeBlock');
+  assert.equal('attrs' in plain, false);
+  assert.deepEqual(labeled.attrs, { language: 'bash' });
+});

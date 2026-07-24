@@ -28,10 +28,33 @@ test_bool_flag() {
   pass "bool flag"
 }
 
-test_unknown_flag_is_positional() {
-  _parse_flags "desc-file" -- a --unknown b c
-  [[ "${_POSITIONAL[*]}" == "a --unknown b c" ]] || fail "unknown stayed positional: ${_POSITIONAL[*]}"
-  pass "unknown flag treated as positional"
+test_unknown_flag_errors() {
+  # Typo protection: a whitespace-free letter-led unknown --flag is a hard
+  # error instead of silently becoming a positional (e.g. the description).
+  local rc=0
+  _parse_flags "desc-file" -- a --unknown b c 2>/dev/null || rc=$?
+  [[ $rc -eq 2 ]] || fail "unknown flag should return 2, got $rc"
+  pass "unknown letter-led flag is a hard error"
+}
+
+test_multiword_dash_data_is_positional() {
+  _parse_flags "desc-file" -- K-1 "--force is deprecated, use --safe"
+  [[ "${_POSITIONAL[*]}" == "K-1 --force is deprecated, use --safe" ]] \
+    || fail "multi-word dash data: ${_POSITIONAL[*]}"
+  pass "multi-word data starting with --word stays positional"
+}
+
+test_double_dash_ends_flags() {
+  _parse_flags "markdown" -- K-1 -- --markdown
+  [[ "${_POSITIONAL[*]}" == "K-1 --markdown" ]] || fail "-- end-of-flags: ${_POSITIONAL[*]}"
+  [[ "${#_BOOLS[@]}" -eq 0 ]] || fail "bools should be empty: ${_BOOLS[*]:-}"
+  pass "lone -- ends flag parsing"
+}
+
+test_duplicate_value_flag_last_wins() {
+  _parse_flags "parent" -- K-1 --parent A-1 --parent A-2
+  [[ "$(_flag_value parent)" == "A-2" ]] || fail "last --parent should win: $(_flag_value parent)"
+  pass "duplicate value flags resolve last-wins"
 }
 
 test_resolve_plain_text() {
@@ -72,7 +95,10 @@ test_resolve_markdown_flag() {
 
 test_basic
 test_bool_flag
-test_unknown_flag_is_positional
+test_unknown_flag_errors
+test_multiword_dash_data_is_positional
+test_double_dash_ends_flags
+test_duplicate_value_flag_last_wins
 test_resolve_plain_text
 test_resolve_adf_passthrough
 test_resolve_desc_file
@@ -106,10 +132,12 @@ test_update_merges_fields_json_with_desc_file() {
     || fail "expected mcp_fallback without creds, got: $out"
   echo "$out" | jq -e '.params.fields.summary == "New title"' >/dev/null \
     || fail "summary from FIELDS_JSON must survive alongside --desc-file: $out"
-  echo "$out" | jq -e '.params.fields.description.type == "doc"' >/dev/null \
-    || fail "description ADF from --desc-file missing: $out"
-  echo "$out" | jq -e '.params.fields.description.content[0].type == "heading"' >/dev/null \
-    || fail "desc-file body should be markdown-converted ADF: $out"
+  # No-creds fallback carries the ORIGINAL markdown (MCP renders markdown
+  # natively), not converted ADF.
+  echo "$out" | jq -e '.params.fields.description | type == "string" and startswith("# New body")' >/dev/null \
+    || fail "desc-file body should be the original markdown string: $out"
+  echo "$out" | jq -e '.note | test("markdown")' >/dev/null \
+    || fail "markdown fallback should carry an explanatory note: $out"
   rm -f "$tmp"
   pass "update_issue merges FIELDS_JSON summary with --desc-file body"
 }
@@ -123,8 +151,8 @@ test_update_desc_file_only_still_works() {
   local out
   out=$(env -u JIRA_API_KEY -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
     update_issue INCORP-1 --desc-file "$tmp" 2>/dev/null || true)
-  echo "$out" | jq -e '.api == "mcp_fallback" and .params.fields.description.type == "doc"' >/dev/null \
-    || fail "desc-file only should still update description: $out"
+  echo "$out" | jq -e '.api == "mcp_fallback" and (.params.fields.description | type == "string" and startswith("plain body line"))' >/dev/null \
+    || fail "desc-file only should still update description (as original markdown): $out"
   echo "$out" | jq -e '.params.fields | has("summary") | not' >/dev/null \
     || fail "desc-file only must not invent a summary field: $out"
   rm -f "$tmp"
@@ -381,5 +409,16 @@ test_get_issue_empty_positional_arity
 test_create_issue_empty_positional_arity
 test_link_issues_direction
 test_link_issues_arity
+
+test_create_issue_task_default() {
+  # SKILL.md: "Default issue type is Task" — 2 positionals = PROJECT SUMMARY.
+  local out
+  out=$(JIRA_WRITER_DRY_RUN=1 JIRA_DOMAIN=example.atlassian.net JIRA_API_KEY=u@e.com:x \
+    bash "$SCRIPT_DIR/jira-api-wrapper.sh" create_issue INCORP "Just a summary" 2>/dev/null)
+  echo "$out" | jq -e '.fields.issuetype.name == "Task" and .fields.summary == "Just a summary"' >/dev/null \
+    || fail "2-arg create should default type to Task: $out"
+  pass "create_issue defaults type to Task with 2 positionals"
+}
+test_create_issue_task_default
 
 echo "test-wrapper-flags.sh: all pass"
