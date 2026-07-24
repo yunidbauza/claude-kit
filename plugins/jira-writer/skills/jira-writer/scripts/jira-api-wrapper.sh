@@ -294,6 +294,8 @@ _usage_for_op() {
       lookup_user) echo "lookup_user QUERY" ;;
       add_worklog) echo "add_worklog KEY TIME_SPENT" ;;
       upload_attachment) echo "upload_attachment KEY FILE [name]" ;;
+      link_issues) echo "link_issues OUTWARD_KEY LINK_TYPE INWARD_KEY   # 'A Blocks B' = A blocks B" ;;
+      get_link_types) echo "get_link_types" ;;
       get_remote_links) echo "get_remote_links KEY" ;;
       test_connection) echo "test_connection" ;;
       *) echo "$1 [args...]" ;;
@@ -806,6 +808,59 @@ op_upload_attachment() {
 }
 
 # Get remote links operation
+# Link two issues. DIRECTION MATTERS: the first key is the OUTWARD issue,
+# which carries the link type's outward description — `link_issues A Blocks B`
+# means "A blocks B" (B shows "is blocked by A"). Getting this backwards is
+# the classic issue-link bug; keep arg order aligned with the sentence.
+op_link_issues() {
+    local outward_key="$1" link_type="$2" inward_key="$3"
+
+    local mcp_params _note
+    mcp_params=$(jq -n --arg type "$link_type" --arg out "$outward_key" --arg in "$inward_key" \
+        '{linkType: $type, outwardIssueKey: $out, inwardIssueKey: $in}')
+    _note="WARNING: the Atlassian MCP createIssueLink tool has an open bug that INVERTS link direction (atlassian/atlassian-mcp-server#112). If you create the link via MCP, verify the direction afterwards with get_issue and re-create if reversed."
+
+    # Check REST availability
+    if ! check_rest_available; then
+        output_mcp_fallback "createIssueLink" "$mcp_params" "REST credentials not configured" "$_note"
+        return 1
+    fi
+
+    # Try REST API (POST /issueLink returns 201 with an empty body)
+    local result
+    if result=$(jira_link_issues "$outward_key" "$link_type" "$inward_key" 2>&1); then
+        if [[ -n "$result" ]]; then
+            output_rest_success "$result"
+        else
+            output_rest_success "$(jq -n --arg link "$outward_key $link_type $inward_key" \
+                '{success: true, link: $link}')"
+        fi
+        return 0
+    else
+        output_mcp_fallback "createIssueLink" "$mcp_params" "$result" "$_note"
+        return 1
+    fi
+}
+
+# List issue link type names + their inward/outward descriptions.
+op_get_link_types() {
+    # Check REST availability
+    if ! check_rest_available; then
+        output_mcp_fallback "getIssueLinkTypes" "{}" "REST credentials not configured"
+        return 1
+    fi
+
+    # Try REST API
+    local result
+    if result=$(jira_get_link_types 2>&1); then
+        output_rest_success "$result"
+        return 0
+    else
+        output_mcp_fallback "getIssueLinkTypes" "{}" "$result"
+        return 1
+    fi
+}
+
 op_get_remote_links() {
     local issue_key="$1"
 
@@ -919,6 +974,8 @@ print_usage() {
     echo "  get_transitions KEY              - Get available transitions" >&2
     echo "  transition_issue KEY TRANSITION_ID - Transition issue status" >&2
     echo "  search_jql JQL [max_results]     - Search with JQL" >&2
+    echo "  link_issues OUT TYPE IN          - Link issues ('A Blocks B' = A blocks B)" >&2
+    echo "  get_link_types                   - List link type names + directions" >&2
     echo "  get_projects [max_results]       - List visible projects" >&2
     echo "  get_issue_types PROJECT          - Get issue types for project" >&2
     echo "  lookup_user QUERY                - Search for users" >&2
@@ -951,6 +1008,8 @@ KNOWN_OPS=(
     lookup_user
     add_worklog
     upload_attachment
+    link_issues
+    get_link_types
     get_remote_links
     validate_adf
     test_connection
@@ -1015,6 +1074,8 @@ normalize_op() {
         user|users|lookup)      printf 'lookup_user\n'; return 0 ;;
         worklog)                printf 'add_worklog\n'; return 0 ;;
         attach|attachment|upload) printf 'upload_attachment\n'; return 0 ;;
+        link|link_issue)        printf 'link_issues\n'; return 0 ;;
+        link_types|linktypes)   printf 'get_link_types\n'; return 0 ;;
         links|remote_links)     printf 'get_remote_links\n'; return 0 ;;
         test|ping)              printf 'test_connection\n'; return 0 ;;
     esac
@@ -1248,6 +1309,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
         upload_attachment)
             [[ $# -lt 2 ]] && { echo "Error: missing required arguments for upload_attachment" >&2; echo "Usage: $(_usage_for_op upload_attachment)" >&2; exit 1; }
             op_upload_attachment "$@"
+            ;;
+        link_issues)
+            [[ $# -lt 3 ]] && { echo "Error: missing required arguments for link_issues" >&2; echo "Usage: $(_usage_for_op link_issues)" >&2; exit 1; }
+            op_link_issues "$@"
+            ;;
+        get_link_types)
+            op_get_link_types
             ;;
         get_remote_links)
             [[ $# -lt 1 ]] && { echo "Error: missing required arguments for get_remote_links" >&2; echo "Usage: $(_usage_for_op get_remote_links)" >&2; exit 1; }

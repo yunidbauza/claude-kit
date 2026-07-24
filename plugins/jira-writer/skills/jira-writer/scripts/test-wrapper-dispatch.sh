@@ -76,6 +76,10 @@ assert_eq "alias user -> lookup_user" "lookup_user" "$(normalize_op user)"
 assert_eq "alias attach -> upload_attachment" "upload_attachment" "$(normalize_op attach)"
 assert_eq "alias upload -> upload_attachment" "upload_attachment" "$(normalize_op upload)"
 assert_eq "alias links -> get_remote_links" "get_remote_links" "$(normalize_op links)"
+assert_eq "alias link -> link_issues" "link_issues" "$(normalize_op link)"
+assert_eq "alias link_types -> get_link_types" "get_link_types" "$(normalize_op link_types)"
+assert_eq "canonical link_issues passes through" "link_issues" "$(normalize_op link_issues)"
+assert_eq "canonical get_link_types passes through" "get_link_types" "$(normalize_op get_link_types)"
 assert_eq "alias test -> test_connection" "test_connection" "$(normalize_op test)"
 
 # --- normalize_op: unknown returns input unchanged ---
