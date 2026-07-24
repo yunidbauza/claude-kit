@@ -57,6 +57,7 @@ jira-writer search_jql "project = PROJ AND status = Open"
 jira-writer get_projects
 jira-writer get_issue_types PROJECT_KEY
 jira-writer get_transitions PROJ-123
+jira-writer get_remote_links PROJ-123   # remote/web links attached to an issue
 jira-writer lookup_user "alice@example.com"
 
 # Create (‑‑desc-file/‑‑markdown convert markdown → validated ADF automatically)
@@ -89,6 +90,7 @@ jira-writer validate_adf /tmp/my-adf.json   # local ADF check, no Jira call
 # Diagnostics & mermaid
 jira-writer doctor              # dependency status (JSON)
 jira-writer connection-test     # API connectivity + recommendation
+jira-writer test_connection     # REST auth check (returns {rest_api: {...}, recommended: ...})
 jira-writer mermaid <key> <file_or_code> [filename]
 jira-writer mermaid-batch <key> '<json_array_of_diagrams>'
 ```

@@ -40,7 +40,7 @@ clarifying `note`. Plain-text input is unchanged — REST failure still emits
 | Attachment upload | Other error | RETRY once; if fails, skip with warning |
 | Description update | REST error | TRY MCP fallback (simple content); ROLLBACK attachments; report |
 | Section detection | Section not found | ASK user for clarification |
-| Wrapper exit 2 | Unknown operation | Suggestion shown; check op name or run with no args |
+| Wrapper exit 2 | Unknown operation or unknown flag | Suggestion/known-flags list shown; check op/flag name. Data starting with `--word` goes after a lone `--` |
 
 ## Rollback Procedure
 

@@ -49,9 +49,10 @@ main() {
     local issue_key="$1"
     local diagrams_json="$2"
 
-    # Validate JSON
-    if ! echo "$diagrams_json" | jq empty 2>/dev/null; then
-        log_error "Invalid JSON provided"
+    # Validate JSON — must be an array of diagram objects, not a bare object
+    # (jq 'length' on an object counts keys and .[$i] then dies mid-loop).
+    if ! echo "$diagrams_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+        log_error "diagrams_json must be a JSON array of {code, filename} objects"
         exit 1
     fi
 
@@ -65,12 +66,15 @@ main() {
 
     # Single stderr capture file reused across iterations, registered with an
     # EXIT trap so SIGINT/SIGTERM mid-loop doesn't leak the file to /tmp.
-    local upload_stderr
+    # Deliberately NOT `local`: the trap fires after main() returns, when a
+    # local would already be unset — under `set -u` that kills the trap,
+    # leaks the file, and clobbers the script's exit status.
     upload_stderr=$(mktemp)
     trap 'rm -f "$upload_stderr"' EXIT
 
-    # Process each diagram
-    for i in $(seq 0 $((count - 1))); do
+    # Process each diagram. C-style loop: `seq 0 -1` on BSD/macOS counts
+    # DOWN (emits 0 and -1), so an empty array would run two bogus renders.
+    for ((i = 0; i < count; i++)); do
         local code
         local filename
 
@@ -88,11 +92,14 @@ main() {
         upload_stdout=$("$SCRIPT_DIR/jira-mermaid-upload.sh" "$issue_key" "$code" "$filename" 2>"$upload_stderr") || upload_rc=$?
         if [[ $upload_rc -eq 0 ]]; then
             # stdout is the JSON payload — no awk stripping needed
-            local attachment_id content_url
+            local attachment_id content_url reported_fn
             attachment_id=$(printf '%s' "$upload_stdout" | jq -r '.attachment_id // empty')
             content_url=$(printf '%s' "$upload_stdout" | jq -r '.content_url // empty')
+            # The child normalizes the filename (sanitize + .png suffix);
+            # report what actually landed in Jira, not the raw input.
+            reported_fn=$(printf '%s' "$upload_stdout" | jq -r '.filename // empty')
             result=$(jq -n \
-                --arg fn "$filename" \
+                --arg fn "${reported_fn:-$filename}" \
                 --arg id "$attachment_id" \
                 --arg url "$content_url" \
                 '{filename: $fn, attachment_id: $id, content_url: $url, success: true}')

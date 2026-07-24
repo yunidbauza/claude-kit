@@ -57,6 +57,16 @@ fi
 jq_available=false
 if command -v jq &> /dev/null; then
     jq_available=true
+else
+    # The full report below is BUILT with jq — without it, report the missing
+    # dependency in hand-written static JSON instead of dying with
+    # "jq: command not found" from the very tool meant to diagnose it.
+    printf '%s\n' '{
+  "jq": {"available": false},
+  "error": "jq is required by jira-writer but was not found in PATH",
+  "remediation": "brew install jq (macOS) or apt-get install jq (Linux), then re-run doctor"
+}'
+    exit 0
 fi
 
 # Check Node (optional — required only for --desc-file / --markdown / validate_adf)

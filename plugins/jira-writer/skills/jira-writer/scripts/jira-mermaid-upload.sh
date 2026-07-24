@@ -10,7 +10,9 @@
 #
 # Arguments:
 #   issue_key           - Jira issue key (e.g., PROJ-123)
-#   mermaid_file_or_code - Path to .mmd file OR mermaid code as string
+#   mermaid_file_or_code - Path to .mmd file OR mermaid code as string.
+#                          A path must contain no whitespace — args with
+#                          spaces/newlines are always treated as code.
 #   filename            - Optional output filename (default: diagram.png)
 #
 # Environment Variables (required):
@@ -40,6 +42,13 @@ NC='\033[0m' # No Color
 log_info() { echo -e "${GREEN}[INFO]${NC} $1" >&2; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+
+# Shared REST helpers — attachment upload goes through jira_upload_attachment
+# so sanitization, auth, and the attachments endpoint live in one place.
+# (Sourcing also re-gates the color vars on [[ -t 2 ]], keeping ANSI codes
+# out of captured stderr.)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/jira-rest-api.sh"
 
 # --- Prerequisites Check ---
 check_prerequisites() {
@@ -137,8 +146,11 @@ main() {
     local mmd_file="$temp_dir/diagram.mmd"
     local png_file="$temp_dir/$output_filename"
 
-    # Handle mermaid input (file or string)
-    if [[ -f "$mermaid_input" ]]; then
+    # Handle mermaid input (file or string). Only treat it as a path when the
+    # file exists AND the argument contains no whitespace — real mermaid
+    # source always has spaces/newlines, so a stray cwd file named e.g.
+    # "flowchart" can't silently substitute its contents for literal code.
+    if [[ -f "$mermaid_input" && ! "$mermaid_input" =~ [[:space:]] ]]; then
         log_info "Reading mermaid from file: $mermaid_input"
         cp "$mermaid_input" "$mmd_file"
     else
@@ -167,40 +179,15 @@ main() {
     png_size=$(stat -f%z "$png_file" 2>/dev/null || stat -c%s "$png_file" 2>/dev/null)
     log_info "PNG created: $png_size bytes"
 
-    # Upload to Jira
+    # Upload to Jira via the shared REST helper — one implementation of the
+    # sanitize regex, auth header (incl. the base64 newline strip), and the
+    # attachments endpoint, instead of a parallel curl path here.
     log_info "Uploading to Jira issue $issue_key..."
 
-    # Base64 encode the API key for Basic auth.
-    # tr -d '\n' strips GNU coreutils' default 76-char wrap; without it, long
-    # tokens produce a multi-line Authorization header that curl rejects on Linux.
-    local auth_header
-    auth_header=$(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')
-
-    local response
-    response=$(curl -s -w "\n%{http_code}" -X POST \
-        -H "Authorization: Basic $auth_header" \
-        -H "X-Atlassian-Token: no-check" \
-        -F "file=@$png_file;filename=$output_filename" \
-        "https://$JIRA_DOMAIN/rest/api/3/issue/$issue_key/attachments")
-
-    # Parse response
-    local http_code
-    http_code=$(echo "$response" | tail -n1)
-    local body
-    body=$(echo "$response" | sed '$d')
-
-    if [[ "$http_code" != "200" ]]; then
-        log_error "Upload failed with HTTP $http_code"
-        log_error "Response: $body"
-
-        case "$http_code" in
-            401|403)
-                log_error "Authentication failed. Check JIRA_API_KEY format (should be email:api_token)"
-                ;;
-            404)
-                log_error "Issue $issue_key not found or no permission"
-                ;;
-        esac
+    local body rc=0
+    body=$(jira_upload_attachment "$issue_key" "$png_file" "$output_filename") || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        log_error "Upload failed for issue $issue_key (see errors above)"
         exit 4
     fi
 
@@ -208,7 +195,11 @@ main() {
     local attachment_id
     local content_url
 
-    attachment_id=$(echo "$body" | jq -r '.[0].id')
+    attachment_id=$(echo "$body" | jq -r '.[0].id // empty')
+    if [[ -z "$attachment_id" ]]; then
+        log_error "Unexpected upload response (no attachment id): $body"
+        exit 4
+    fi
     content_url="https://$JIRA_DOMAIN/rest/api/3/attachment/content/$attachment_id"
 
     log_info "Upload successful!"
