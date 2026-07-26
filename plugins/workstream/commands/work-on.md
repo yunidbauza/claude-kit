@@ -1,1 +1,0 @@
-Invoke the `work-on` skill to start work on the Jira ticket given in $ARGUMENTS — fetch and reconcile the ticket against the codebase, set up an isolated worktree, and hand off to the superpowers design/plan/implement flow.
