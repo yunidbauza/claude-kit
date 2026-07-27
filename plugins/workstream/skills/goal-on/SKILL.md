@@ -20,8 +20,11 @@ hooks:
             2. Read ~/.claude/workstream/goal-on/<session_id>.md.
                Missing or unreadable -> return ok:true. This is not a goal-on session.
             3. Parse the YAML header: status, route, turns_used, turn_budget.
-            4. Return ok:true immediately if status is CLEARED, DONE, FAILED, or
-               NEEDS-DECISION.
+            4. Return ok:true immediately if status is PENDING-APPROVAL, CLEARED,
+               DONE, FAILED, or NEEDS-DECISION. PENDING-APPROVAL means Phase 1 has
+               presented the brief and is waiting on the user — the turn MUST be
+               allowed to end so they can answer. Never block a brief the user has
+               not authorized yet.
             5. If turns_used >= turn_budget: rewrite the header to status: FAILED,
                then return ok:true. The stop rule has tripped.
             6. Otherwise verify the `## Outcome` checklist for real. Do NOT trust
@@ -76,8 +79,8 @@ concurrent sessions never collide, and nothing lands in the user's repo.
 
 ```markdown
 ---
-status: ACTIVE          # ACTIVE | NEEDS-DECISION | DONE | FAILED | CLEARED
-route: code             # artifact | code
+status: PENDING-APPROVAL   # PENDING-APPROVAL | ACTIVE | NEEDS-DECISION | DONE | FAILED | CLEARED
+route: code                # artifact | code
 turns_used: 0
 turn_budget: 8
 created: 2026-07-27T14:30:00Z
@@ -148,17 +151,29 @@ Mixed outcomes take the `code` route; the artifact half rides along as Outcome
 items.
 
 **7. Write the brief and present it.** Write
-`~/.claude/workstream/goal-on/<session-id>.md` with `status: ACTIVE`, then show the
-five sections to the user.
+`~/.claude/workstream/goal-on/<session-id>.md` with **`status: PENDING-APPROVAL`**,
+then show the five sections to the user and end the turn.
+
+`PENDING-APPROVAL` is load-bearing, not decorative. The hook registered the moment
+this skill was invoked, so the verifier runs at the end of *this* turn too. An
+`ACTIVE` brief with an unmet Outcome is exactly what "keep working" looks like — so
+writing `ACTIVE` here makes the verifier block the turn and shove you into Phase 2
+before the user has said a word. `PENDING-APPROVAL` is the only status that lets the
+gate exist.
 
 **User approval here is the only planned gate in the skill.** Do not proceed to
-Phase 2 without it. If the user amends anything, rewrite the brief and re-present.
+Phase 2 without it. If the user amends anything, rewrite the brief (still
+`PENDING-APPROVAL`) and re-present.
 
 ## Phase 2 — Execute (autonomous)
 
-The verifier is already watching. Record evidence as you go: append real command
-output to `## Verification evidence` in the brief. The verifier reads that section
-and treats absent evidence as unmet — unrecorded work does not count as done.
+**First act, before anything else: flip the brief header to `status: ACTIVE`.** That
+single edit is what arms the verifier. Until it happens the hook releases every turn
+and nothing is being enforced. Do it only once the user has actually approved.
+
+The verifier is then watching. Record evidence as you go: append real command output
+to `## Verification evidence` in the brief. The verifier reads that section and
+treats absent evidence as unmet — unrecorded work does not count as done.
 
 ### Route: artifact
 
@@ -207,6 +222,8 @@ be asked.
 
 | Status | When | Then |
 |---|---|---|
+| `PENDING-APPROVAL` | Phase 1 wrote the brief; user has not approved | Verifier releases the turn. Not terminal — flip to `ACTIVE` on approval. |
+| `ACTIVE` | Phase 2 running | Verifier enforces the Outcome. |
 | `DONE` | Outcome verified | Report what was produced. |
 | `FAILED` | Budget spent, or an unresolvable dependency conflict | Report what was achieved and the exact remaining gap. Never fail silently. |
 | `NEEDS-DECISION` | An unforeseen decision blocks progress | The verifier releases the turn so the user can be asked. Resolve, set `ACTIVE`, continue. |
@@ -223,6 +240,9 @@ carry a `skillRoot`, which this one does.
 
 ## Red flags
 
+- Writing `status: ACTIVE` before the user approves → the verifier blocks the turn
+  and drags you into Phase 2 unapproved, silently destroying the only gate in the
+  skill. Phase 1 always writes `PENDING-APPROVAL`.
 - Asking a question in Phase 2 → the hook blocks turn-end; ask everything in Phase 1.
 - An Outcome item nobody else could check ("works correctly", "is clean") → rewrite
   it as a command or an artifact.

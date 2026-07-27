@@ -106,9 +106,11 @@ Two phases, split by the moment the hook arms.
      scripts. Anything not destined to be merged.
    - `code` — changes intended to merge into a repo.
 5. Set **Stop Rules**: turn budget (default 8) and the unresolvable-dependency clause.
-6. Present the brief. **User approval here is the only planned gate.** The
-   `NEEDS-DECISION` escape hatch in Phase 2 is an exception path, not a routine
-   checkpoint — if it fires often, Phase 1 interrogation was too shallow.
+6. Write the brief as **`PENDING-APPROVAL`** and present it. **User approval here is
+   the only planned gate.** Phase 2's first act is flipping the status to `ACTIVE`,
+   which is what actually arms the verifier. The `NEEDS-DECISION` escape hatch in
+   Phase 2 is an exception path, not a routine checkpoint — if it fires often, Phase
+   1 interrogation was too shallow.
 
 Phase 1 is deliberately hook-free. A `Stop` hook prevents the turn from ending, so
 questions cannot be asked once it is armed. All interrogation happens first.
@@ -145,7 +147,7 @@ means concurrent sessions cannot collide, and nothing is written into the user's
 repo.
 
 ```
-status:      ACTIVE | NEEDS-DECISION | DONE | FAILED | CLEARED
+status:      PENDING-APPROVAL | ACTIVE | NEEDS-DECISION | DONE | FAILED | CLEARED
 route:       artifact | code
 turns_used:  N
 turn_budget: 8
@@ -179,6 +181,7 @@ the common paths cost almost nothing.
 | Brief state | Verdict | Effect |
 |---|---|---|
 | file missing, or `status: CLEARED` | `ok:true` | not a goal-on session — get out of the way |
+| `status: PENDING-APPROVAL` | `ok:true` | Phase 1 is awaiting the user; the turn must be allowed to end |
 | `status: DONE` / `FAILED` | `ok:true` | terminal, release |
 | `status: NEEDS-DECISION` | `ok:true` | escape hatch — release so the user can be asked |
 | `turns_used >= turn_budget` | `ok:true` | stop rule tripped; flip brief to `FAILED` |
@@ -261,3 +264,44 @@ Verification is therefore behavioral:
 2. **`artifact` run** — completes, verifies, writes `DONE`.
 3. **`code` run** — branches off `origin/main`, opens a draft PR, hands to `ship`.
 4. **Budget-exhaustion run** — proves `FAILED` reports rather than hangs.
+
+## Implementation notes
+
+Recorded after building the skill. Deviations from the plan are listed here rather
+than silently absorbed.
+
+### The gate passed
+
+Skill-frontmatter `Stop` hooks register, fire, and block repeatedly. The
+load-bearing risk in the Risk section is retired.
+
+One scoping question the plan did not anticipate came up during the smoke test:
+`Ran 2 stop hooks` appeared even though no `Stop` hook exists anywhere in the user's
+settings. A follow-up test — restart, never invoke the skill, end a turn — produced
+no hook firing at all. **Registration is per-invocation, not per-load.** Installing
+the plugin therefore arms nothing for users who never run `goal-on`; the `2` came
+from invoking the smoke skill twice, each invocation registering its own hook. That
+led to a new red flag in the skill: re-invoking `goal-on` mid-goal stacks verifiers
+and doubles per-turn cost for no benefit.
+
+### Bug found in testing: the approval gate could not hold
+
+The original design had Phase 1 write `status: ACTIVE` and then end its turn awaiting
+approval. Because the hook registers at invocation, the verifier ran at the end of
+that very turn, saw an `ACTIVE` brief with an unmet Outcome — indistinguishable from
+work in progress — and blocked, forcing Phase 2 to start before the user had said
+anything. **The gate was unenforceable as specified.**
+
+Fix: a sixth status, `PENDING-APPROVAL`, written by Phase 1 and short-circuited by
+the verifier. Phase 2's first act is flipping it to `ACTIVE`, which is the moment
+enforcement actually begins. The state machine now distinguishes "written but not
+authorized" from "in progress", which is the distinction the gate always needed.
+
+This is a design-level correction, not a wording tweak — the spec's brief contract,
+verifier decision table, and Phase 1 step 6 were all updated above.
+
+### Minor
+
+`Failing open is mandatory` must stay on one line in the verifier prompt. YAML block
+scalars preserve newlines, so wrapping the phrase across lines broke the
+verification assertion that checks for it.
