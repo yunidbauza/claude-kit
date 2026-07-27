@@ -98,6 +98,34 @@ real browser** (Playwright/e2e specs for the touched surface, or the `verify` sk
 to confirm it renders and behaves as designed — green type-check/unit tests do not
 prove a UI works.
 
+**Subagent commits must land in the worktree, not the shared checkout.** If you
+execute the plan with `superpowers:subagent-driven-development`, mind a CWD gap: a
+controller-side `cd` into a git-fallback worktree (superpowers' worktree Step 1b)
+does **not** propagate to dispatched subagents — each subagent gets a fresh shell
+rooted at the original project root, i.e. the *shared checkout on the base branch*. A
+bare `git add`/`git commit` there commits the task onto the base branch in the shared
+checkout instead of the feature branch in the worktree — polluting the base branch and
+dropping the work from the PR. (Native worktree tools avoid this, but don't rely on
+which path created the worktree.) Guard every dispatch:
+
+- Capture the worktree path once in the controller: `WT=$(git rev-parse --show-toplevel)`.
+- Give every implementer / fix / task-reviewer subagent that absolute path and require
+  it to run **all** git and file commands from there — begin each bash call with
+  `cd "$WT"` or use `git -C "$WT" …` — and, before committing, assert
+  `[ "$(git rev-parse --show-toplevel)" = "$WT" ]` and that `git branch --show-current`
+  is the feature branch. This is the hard version of the template's advisory
+  `Work from: [directory]` line; fill that line with the absolute `$WT` path, never a
+  bare `.` or the repo name.
+- After each task's review comes back clean, verify from the controller that the commit
+  actually landed on the feature branch (`git -C "$WT" log --oneline -1`) and that the
+  base branch's HEAD in the shared checkout did **not** move. A commit that landed on
+  the base branch is a failed task — reset it off the base branch and re-dispatch with
+  the CWD contract enforced.
+
+If you cannot guarantee that contract, execute the plan inline
+(`superpowers:executing-plans`) from the worktree session instead — the controller's
+own CWD is the worktree, so inline commits are always safe.
+
 **Create the PR as a draft** — `gh pr create --draft`.
 `superpowers:finishing-a-development-branch` is forge-neutral (it pushes the branch
 but leaves the `gh pr create` to you), so pass `--draft` explicitly; it will not add
@@ -125,4 +153,8 @@ that moment.
 - A branch name missing the ticket key → merge-pr can't find the ticket to close.
 - Opening the PR ready-for-review instead of a draft → CI runs before ship's self
   review even starts; always `gh pr create --draft` (ship marks it ready).
+- Dispatching subagent-driven-development implementers from a fallback worktree
+  without pinning their CWD to `$WT` → their bare `git commit` lands on the base
+  branch in the shared checkout, not the feature branch, and the work never reaches
+  the PR.
 - Presenting UI design options as ASCII art → browser HTML mockups, always.
