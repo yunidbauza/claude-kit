@@ -153,3 +153,87 @@ five sections to the user.
 
 **User approval here is the only planned gate in the skill.** Do not proceed to
 Phase 2 without it. If the user amends anything, rewrite the brief and re-present.
+
+## Phase 2 — Execute (autonomous)
+
+The verifier is already watching. Record evidence as you go: append real command
+output to `## Verification evidence` in the brief. The verifier reads that section
+and treats absent evidence as unmet — unrecorded work does not count as done.
+
+### Route: artifact
+
+Do the work to completion. Verify it — open the file, run the script, confirm the
+Jira issue actually changed. Append the evidence. Write `status: DONE`.
+
+### Route: code
+
+1. `git fetch origin`
+2. Confirm the working tree is clean. If it is dirty, this should have surfaced in
+   Phase 1 — stop, set `status: NEEDS-DECISION`, and ask. Never branch over
+   uncommitted work.
+3. Branch off the repo's default branch:
+
+```bash
+DEFAULT=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
+git checkout -b goal/<slug> "origin/$DEFAULT"
+```
+
+Work in the current checkout — no worktree. Record the branch name in the brief
+header.
+
+4. Implement. Multiple files are expected and fine.
+5. Verify with the repo's own checks — discover them from `CLAUDE.md`,
+   `package.json` scripts, or the `Makefile`. **Any UI surface also requires driving
+   it in a real browser** (Playwright specs for the touched surface, or the `verify`
+   skill). Green type-check and unit tests do not prove a UI renders.
+6. Append all of that output to `## Verification evidence`.
+7. `gh pr create --draft`
+8. Invoke the `workstream:ship` skill with the PR number, and record the handoff in
+   the evidence section.
+9. Write `status: DONE`.
+
+**The goal is met at draft PR raised plus ship handed off.** `ship` owns CI,
+findings triage, approval, and the merge checkpoint. `goal-on` does not wait for the
+merge, and must not duplicate any of ship's steps.
+
+A `goal/<slug>` branch carries no Jira key by design — `goal-on` is the non-ticket
+entry point. `ship` already parses for a key, finds none, skips the Jira transitions,
+and notes it. That is correct behavior; do not work around it.
+
+## Terminal states
+
+Self-clearing is the normal path. Write the terminal status yourself; do not wait to
+be asked.
+
+| Status | When | Then |
+|---|---|---|
+| `DONE` | Outcome verified | Report what was produced. |
+| `FAILED` | Budget spent, or an unresolvable dependency conflict | Report what was achieved and the exact remaining gap. Never fail silently. |
+| `NEEDS-DECISION` | An unforeseen decision blocks progress | The verifier releases the turn so the user can be asked. Resolve, set `ACTIVE`, continue. |
+| `CLEARED` | User abandons the goal | Set it on request — no command syntax needed. |
+
+`/workstream:goal-on clear` is supported as a manual override and can also be
+invoked programmatically as a skill. Note the hook itself cannot be deregistered —
+after a terminal status it stays registered and short-circuits on the cheap status
+read, costing one small verifier call per turn-end for the rest of the session. A
+new session starts clean.
+
+A native `/goal` and this skill do not interfere: `/goal clear` skips hooks that
+carry a `skillRoot`, which this one does.
+
+## Red flags
+
+- Asking a question in Phase 2 → the hook blocks turn-end; ask everything in Phase 1.
+- An Outcome item nobody else could check ("works correctly", "is clean") → rewrite
+  it as a command or an artifact.
+- Claiming done without appending evidence → the verifier reads the evidence
+  section, not the conversation, and absent evidence is unmet.
+- Re-invoking `goal-on` while a goal is active → each invocation registers another
+  verifier, doubling the per-turn cost for no benefit. Amend the brief instead.
+- Creating a worktree → `goal-on` works in the current checkout by design.
+- Branching off the current branch instead of the freshly fetched default branch.
+- Waiting for the merge → `goal-on` ends at draft PR plus ship handoff.
+- Marking a UI change verified on green tests alone → drive it in a browser.
+- Raising `turn_budget` above 8 without also raising
+  `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` → the harness quits first and the extra budget
+  never fires.
