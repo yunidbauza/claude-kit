@@ -423,4 +423,58 @@ test_create_issue_task_default() {
 }
 test_create_issue_task_default
 
+test_update_append_merges_existing_description() {
+  # --append must fetch the current description ADF and concatenate the new
+  # content onto it (lossless: the existing body is never converted).
+  local mock_dir mock_log tmp
+  mock_dir=$(mktemp -d)
+  mock_log="$mock_dir/put.log"
+  cat > "$mock_dir/curl" <<BASH
+#!/usr/bin/env bash
+is_put=0; prev=""
+for a in "\$@"; do
+  [[ "\$prev" == "-X" && "\$a" == "PUT" ]] && is_put=1
+  [[ "\$prev" == "--data-raw" ]] && printf '%s\n' "\$a" >> "$mock_log"
+  prev="\$a"
+done
+if [[ \$is_put -eq 1 ]]; then echo ""; echo "204"; else
+  echo '{"fields":{"description":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"EXISTING"}]}]}}}'
+  echo "200"
+fi
+BASH
+  chmod +x "$mock_dir/curl"
+  export PATH="$mock_dir:$PATH"
+  export JIRA_DOMAIN="example.atlassian.net"
+  export JIRA_API_KEY="user@example.com:fake-token"
+  tmp=$(mktemp -t mdXXXX).md
+  printf '## Appended\n' > "$tmp"
+
+  bash "$SCRIPT_DIR/jira-api-wrapper.sh" update_issue K-1 '{}' --desc-file "$tmp" --append >/dev/null 2>&1
+  jq -e '.fields.description.content | length == 2
+         and .[0].content[0].text == "EXISTING"
+         and .[1].type == "heading"' "$mock_log" >/dev/null \
+    || fail "--append should concatenate onto the existing description. PUT: $(cat "$mock_log")"
+
+  rm -f "$tmp"
+  PATH=$(echo "$PATH" | sed -e "s|$mock_dir:||")
+  rm -rf "$mock_dir"
+  pass "update_issue --append merges onto the existing description"
+}
+test_update_append_merges_existing_description
+
+test_update_append_requires_rest() {
+  # Without REST creds --append must hard-error: any MCP fallback would
+  # overwrite the existing description.
+  local tmp out
+  tmp=$(mktemp -t mdXXXX).md
+  printf 'extra\n' > "$tmp"
+  out=$(env -u JIRA_API_KEY -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
+    update_issue K-1 '{}' --desc-file "$tmp" --append 2>/dev/null || true)
+  echo "$out" | jq -e '.api == "error" and (.error | test("append requires REST"))' >/dev/null \
+    || fail "--append without creds should be api:error, got: $out"
+  rm -f "$tmp"
+  pass "update_issue --append without REST creds is a hard error"
+}
+test_update_append_requires_rest
+
 echo "test-wrapper-flags.sh: all pass"

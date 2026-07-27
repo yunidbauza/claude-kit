@@ -202,7 +202,7 @@ _parse_flags() {
             local name="${arg#--}"
             if [[ "$known" == *",$name,"* ]]; then
                 # Bool flags: markdown, bisect, summary-only
-                if [[ "$name" == "markdown" || "$name" == "bisect" || "$name" == "summary-only" ]]; then
+                if [[ "$name" == "markdown" || "$name" == "bisect" || "$name" == "summary-only" || "$name" == "append" ]]; then
                     _BOOLS+=("$name")
                     shift
                 else
@@ -317,7 +317,7 @@ _resolve_content_input() {
 _usage_for_op() {
     case "$1" in
       create_issue) echo "create_issue PROJECT TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]" ;;
-      update_issue) echo "update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown]" ;;
+      update_issue) echo "update_issue KEY FIELDS_JSON [--desc-file PATH] [--markdown] [--append]   # default REPLACES the description; --append merges onto the existing one" ;;
       add_comment) echo "add_comment KEY BODY [--desc-file PATH] [--markdown]" ;;
       get_issue) echo "get_issue KEY [FIELDS] [--summary-only]" ;;
       validate_adf) echo "validate_adf PATH_TO_ADF_JSON" ;;
@@ -540,6 +540,11 @@ op_update_issue() {
     # Original markdown source (when the description came from
     # --markdown/--desc-file) — preferred by the no-creds MCP fallback.
     local orig_md="${4:-}"
+    # --append: merge the new description onto the existing one instead of
+    # replacing it (the default REPLACES the whole description — a lossy
+    # overwrite for rich tickets when the new body was converted from
+    # markdown).
+    local append_bool="${5:-0}"
 
     # Validate JSON input before anything else so the error returns regardless
     # of credential state.
@@ -552,6 +557,39 @@ op_update_issue() {
             "input": $input
         }'
         return 1
+    fi
+
+    # --append: lossless append. The existing description ADF is fetched and
+    # the new content nodes are concatenated onto it before the PUT — nothing
+    # is round-tripped through markdown, so tables/checkboxes/media in the
+    # existing body survive untouched. Requires REST: without reading the
+    # current description any fallback would overwrite, so no-creds is a
+    # hard error rather than a silent replace.
+    if [[ "$append_bool" == "1" ]]; then
+        if ! check_rest_available; then
+            jq -n --arg key "$issue_key" '{api:"error", operation:"update_issue", issue_key:$key,
+                error:"--append requires REST credentials: the current description must be read to append losslessly (an MCP fallback would overwrite it)"}'
+            return 1
+        fi
+        local _new_desc
+        _new_desc=$(echo "$fields_json" | jq -c '.description // empty')
+        if [[ -n "$_new_desc" && "$_new_desc" != "null" ]]; then
+            local _cur_body _cur_desc
+            if ! _cur_body=$(jira_get_issue "$issue_key" "description" 2>&1); then
+                jq -n --arg key "$issue_key" --arg err "$_cur_body" '{api:"error", operation:"update_issue", issue_key:$key,
+                    error:("--append: failed to fetch the current description: " + $err)}'
+                return 1
+            fi
+            _cur_desc=$(echo "$_cur_body" | jq -c '.fields.description // empty')
+            if [[ -n "$_cur_desc" && "$_cur_desc" != "null" ]] \
+                && printf '%s' "$_cur_desc" | jq -e "$_ADF_DOC_JQ_FILTER" >/dev/null 2>&1; then
+                local _merged
+                _merged=$(jq -n --argjson cur "$_cur_desc" --argjson new "$_new_desc" \
+                    '$cur | .content += $new.content')
+                fields_json=$(echo "$fields_json" | jq -c --argjson d "$_merged" '.description = $d')
+            fi
+            # No existing description (or not an ADF doc): the new one stands alone.
+        fi
     fi
 
     # Pre-flight ADF validation when input was constructed as ADF
@@ -599,6 +637,15 @@ op_update_issue() {
         fi
         return 0
     else
+        # --append has no fallback path: any MCP retry carries only the NEW
+        # content and would overwrite the existing description.
+        if [[ "$append_bool" == "1" ]]; then
+            log_error "REST update (--append) failed: $result"
+            jq -n --arg op "update_issue" --arg key "$issue_key" --arg err "$result" \
+                '{api:"error", operation:$op, params:{issueIdOrKey:$key}, rest_error:$err,
+                  note:"REST failed for --append — no MCP fallback (it would overwrite the existing description). Retry via REST."}'
+            return 1
+        fi
         # When the description came from markdown, the MCP fallback IS viable
         # with the lossless original — only hand-built ADF has no retry path.
         if [[ -n "$orig_md" ]]; then
@@ -1073,7 +1120,7 @@ print_usage() {
     echo "Operations:" >&2
     echo "  get_issue KEY [fields]           - Get issue details" >&2
     echo "  create_issue PROJECT TYPE SUMMARY [desc] - Create new issue" >&2
-    echo "  update_issue KEY FIELDS_JSON     - Update issue fields" >&2
+    echo "  update_issue KEY FIELDS_JSON     - Update fields (desc REPLACED; --append merges)" >&2
     echo "  add_comment KEY BODY             - Add comment to issue" >&2
     echo "  get_transitions KEY              - Get available transitions" >&2
     echo "  transition_issue KEY TRANSITION_ID - Transition issue status" >&2
@@ -1301,10 +1348,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
             op_create_issue "$@"
             ;;
         update_issue)
-            _parse_flags "desc-file,markdown" -- "$@"
+            _parse_flags "desc-file,markdown,append" -- "$@"
             if [[ ${#_POSITIONAL[@]} -gt 0 ]]; then set -- "${_POSITIONAL[@]}"; else set --; fi
             _df="$(_flag_value desc-file)"; _md="0"
             _has_bool markdown && _md="1"
+            _append="0"; _has_bool append && _append="1"
             if [[ -n "$_df" || "$_md" == "1" ]]; then
                 # Rich-content path: KEY is required; the description body is
                 # resolved from --desc-file or --markdown and the update is sent
@@ -1342,7 +1390,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                     # No creds: the MCP fallback only needs the original
                     # markdown, so skip the Node-based ADF conversion entirely
                     # (works on MCP-only setups without Node).
-                    op_update_issue "$_key" "$_base" "1" "$_orig_md"
+                    op_update_issue "$_key" "$_base" "1" "$_orig_md" "$_append"
                 else
                     if [[ -n "$_df" ]]; then
                         _adf=$(_resolve_content_input "" "$_df" "0")
@@ -1353,7 +1401,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                         exit 1
                     }
                     _fields=$(jq -n --argjson base "$_base" --argjson desc "$_adf" '$base + {description: $desc}')
-                    op_update_issue "$_key" "$_fields" "1" "$_orig_md"
+                    op_update_issue "$_key" "$_fields" "1" "$_orig_md" "$_append"
                 fi
             else
                 if [[ $# -lt 2 ]]; then
@@ -1368,7 +1416,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
                 if [[ -n "${2:-}" ]] && echo "$2" | jq -e ".description | $_ADF_DOC_JQ_FILTER" >/dev/null 2>&1; then
                     _is_adf="1"
                 fi
-                op_update_issue "$1" "$2" "$_is_adf"
+                op_update_issue "$1" "$2" "$_is_adf" "" "$_append"
             fi
             ;;
         add_comment)

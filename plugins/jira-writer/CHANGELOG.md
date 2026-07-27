@@ -1,6 +1,19 @@
 # Changelog — jira-writer
 
-## 1.8.1 — 2026-07-27
+## 1.9.0 — 2026-07-27
+
+### Added
+- **`update_issue --append`** — lossless append to an existing description.
+  Field report: agents had to hand-splice ADF because `--desc-file` /
+  `--markdown` always REPLACE the whole description, and round-tripping a
+  rich body (tables, checkboxes, embedded images) through markdown is
+  silently lossy. `--append` fetches the current description ADF and
+  concatenates the new content nodes onto it before the PUT — the existing
+  body is never converted. Requires REST (no-creds is a hard error and
+  REST-failure offers no MCP retry: any fallback would overwrite). SKILL.md
+  now warns that the default replaces; workflow.md points plain appends at
+  the flag. Regression tests: merge order + existing-content preservation,
+  and the no-creds hard error.
 
 ### Fixed
 - **`link_issues` created every link inverted.** `link_issues A Blocks B`
