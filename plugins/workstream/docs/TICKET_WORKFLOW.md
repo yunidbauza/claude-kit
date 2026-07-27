@@ -1,6 +1,6 @@
 # Ticket-to-Merge Workflow
 
-Five skills cover the full lifecycle of a Jira ticket, from intake to squash merge.
+Six skills cover the full lifecycle of a Jira ticket, from intake to squash merge.
 Each is independently invocable; together they chain end to end:
 
 ```
@@ -28,6 +28,7 @@ Standalone entry points:
 | Command | Use it when |
 |---|---|
 | `/workstream:work-on <KEY>` | Starting a ticket from scratch. |
+| `/workstream:goal-on <prompt>` | Starting ad-hoc work from a vague request rather than a ticket. |
 | `/workstream:ship [PR]` | A PR exists and should be driven to merge. |
 | `/workstream:review-pr-findings [PR]` | A PR has feedback to triage, outside the ship flow. |
 | `/workstream:merge-pr [PR]` | The PR is approved and green; just merge + clean up. |
@@ -57,3 +58,4 @@ Standalone entry points:
 |---|---|---|
 | `ship-config.json` | ship | Per-repo auto-merge default: `{"<owner>/<repo>": {"auto_merge": true}}` — when active, CI green + all findings resolved replaces the human-approval wait. |
 | `pr-ledgers/<owner>-<repo>-pr<N>.md` | review-pr-findings | Finding triage ledger per PR; survives sessions/compaction; deleted after merge. |
+| `goal-on/<session-id>.md` | goal-on | Active goal brief; the verifier Stop hook reads it at every turn-end. Session-id keyed so concurrent sessions cannot collide. |

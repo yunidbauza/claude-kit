@@ -15,7 +15,7 @@
     {
       "name": "workstream",
       "description": "Jira-ticket-to-merge workflow: start a ticket with spec reconciliation and worktrees, drive the PR through review/findings/merge, and propagate spec deviations.",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "source": "./plugins/workstream"
     }
   ]

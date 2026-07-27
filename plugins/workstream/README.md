@@ -1,11 +1,12 @@
 # Workstream
 
-Claude Code plugin covering the full Jira-ticket → PR → merge lifecycle. Five
+Claude Code plugin covering the full Jira-ticket → PR → merge lifecycle. Six
 skills, each independently invocable, that chain end to end:
 
 | Command | Purpose |
 |---|---|
 | `/workstream:work-on <KEY>` | Fetch the ticket, reconcile spec vs codebase (hard user gate), set up an isolated worktree, hand off to design/plan/implement |
+| `/workstream:goal-on <prompt>` | Ad-hoc entry point: rewrite a vague request into a Task/Scope/Constraints/Outcome/Stop-Rules brief, then drive it to a verified finish (artifact) or a draft PR handed to ship (code) |
 | `/workstream:ship [PR] [--auto-merge]` | PR endgame: CI watch → self code review → findings triage loop → watch-until-approved with base-branch sync → merge |
 | `/workstream:review-pr-findings [PR]` | Adversarial triage of all PR feedback with a persistent per-PR ledger; loops until CI is green with no unresolved threads |
 | `/workstream:merge-pr [PR]` | Squash merge, worktree/branch teardown, default-branch pull, Jira ticket → Done |
@@ -49,3 +50,4 @@ files.
 |---|---|
 | `ship-config.json` | Per-repo auto-merge default: `{"<owner>/<repo>": {"auto_merge": true}}` |
 | `pr-ledgers/<owner>-<repo>-pr<N>.md` | Finding triage ledger per PR; deleted after merge |
+| `goal-on/<session-id>.md` | Active goal brief — status, route, turn budget, Outcome checklist, verification evidence |
