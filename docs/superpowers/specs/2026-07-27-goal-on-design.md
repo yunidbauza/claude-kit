@@ -305,3 +305,34 @@ verifier decision table, and Phase 1 step 6 were all updated above.
 `Failing open is mandatory` must stay on one line in the verifier prompt. YAML block
 scalars preserve newlines, so wrapping the phrase across lines broke the
 verification assertion that checks for it.
+
+### Verification results
+
+Run against the skill staged into the installed plugin cache, so it loaded through
+the real plugin path rather than from source.
+
+| Check | Result |
+|---|---|
+| Frontmatter `Stop` hook registers, fires, blocks repeatedly | PASS |
+| Registration is per-invocation, not per-load | PASS — no firing in a session that never invoked the skill |
+| Phase 1 approval gate holds (`PENDING-APPROVAL` short-circuits) | PASS — after the fix; FAILED before it |
+| Artifact route runs to `DONE` with the artifact on disk | PASS |
+| Stop rule trips to `FAILED`, releases, and reports | **NOT EXERCISED** — see below |
+| Code route: branch off default, draft PR, ship handoff | **NOT RUN** — deferred |
+
+The stop-rule test produced a false pass. `turns_used` was patched to 8 on a brief
+whose goal had already completed in a single Phase 2 turn, so the header read
+`status: DONE`. The verifier releases on `DONE` at decision-table step 4, before it
+ever reaches the `turns_used >= turn_budget` check at step 5. The observed release
+and report were an ordinary success, not a stop-rule trip.
+
+A valid test requires the budget to be exhausted while the brief is still `ACTIVE`
+with an unmet Outcome — for example an Outcome that cannot be satisfied, run with a
+small `turn_budget`, so the verifier blocks, increments, and eventually trips step 5
+on its own.
+
+The code route is unverified. It needs a scratch repo, because exercising it against
+a real repo opens a draft PR and hands off to `ship`, which marks the PR ready and
+triggers CI. Everything it depends on — the brief contract, the gate, the verifier
+loop, the stop rule — is verified; what is untested is the branch/PR/handoff
+sequence specific to that route.
