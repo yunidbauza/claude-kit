@@ -69,6 +69,10 @@ jira-writer update_issue PROJ-123 '{"summary":"New title"}'
 jira-writer update_issue PROJ-123 FIELDS_JSON --desc-file PATH --markdown
 # FIELDS_JSON + --desc-file merge in ONE call: rename + rewrite body together
 jira-writer update_issue PROJ-123 '{"summary":"New title"}' --desc-file /tmp/body.md
+# ⚠ --desc-file/--markdown REPLACE the whole description. To ADD to an existing
+# rich description (tables/checkboxes/images survive untouched), use --append:
+# it fetches the current ADF and concatenates the new content onto it.
+jira-writer update_issue PROJ-123 '{}' --desc-file /tmp/extra.md --append
 
 # Comment (‑‑markdown / ‑‑desc-file for rich ADF comments)
 jira-writer add_comment PROJ-123 "Quick note."
@@ -76,7 +80,7 @@ jira-writer add_comment PROJ-123 "## Update
 
 - [x] Done" --markdown
 
-# Link issues — DIRECTION: the FIRST key carries the outward verb.
+# Link issues — DIRECTION: reads as a sentence, the FIRST key performs the verb.
 # "PROJ-1 Blocks PROJ-2" ⇒ PROJ-1 blocks PROJ-2 (PROJ-2 is blocked by PROJ-1).
 jira-writer link_issues PROJ-1 Blocks PROJ-2
 jira-writer get_link_types              # valid type names + inward/outward wording

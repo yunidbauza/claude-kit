@@ -239,17 +239,22 @@ jira_get_issue() {
 }
 
 # Link two issues.
-# Usage: jira_link_issues OUTWARD_KEY LINK_TYPE_NAME INWARD_KEY
-# DIRECTION: the outward issue carries the link type's outward description —
-# jira_link_issues A Blocks B  ⇒  "A blocks B" (B shows "is blocked by A").
+# Usage: jira_link_issues FROM_KEY LINK_TYPE_NAME TO_KEY
+# Reads as the sentence: jira_link_issues A Blocks B ⇒ "A blocks B"
+# (B shows "is blocked by A").
+# DIRECTION (verified against live Jira link objects, GET /issueLink/{id}):
+# counterintuitively, the issue that PERFORMS the link type's outward verb
+# ("blocks") is stored as the link's inwardIssue; the receiving issue is the
+# outwardIssue. So FROM maps to inwardIssue and TO maps to outwardIssue.
+# Mapping arg1 to outwardIssue (the "obvious" reading) inverts every link.
 jira_link_issues() {
-    local outward_key="$1" link_type="$2" inward_key="$3"
+    local from_key="$1" link_type="$2" to_key="$3"
 
     jira_check_credentials || return 1
 
     local data
-    data=$(jq -n --arg type "$link_type" --arg out "$outward_key" --arg in "$inward_key" \
-        '{type: {name: $type}, outwardIssue: {key: $out}, inwardIssue: {key: $in}}')
+    data=$(jq -n --arg type "$link_type" --arg from "$from_key" --arg to "$to_key" \
+        '{type: {name: $type}, inwardIssue: {key: $from}, outwardIssue: {key: $to}}')
 
     local response
     response=$(_jira_post "/rest/api/3/issueLink" "$data")

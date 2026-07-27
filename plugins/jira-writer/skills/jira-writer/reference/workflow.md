@@ -194,6 +194,11 @@ To attach mermaid images, use the two-step flow: create with summary only, uploa
 diagrams, then `update_issue` with description ADF referencing the attachment URLs.
 
 **Existing issues — update modes:**
+
+For a plain append, `update_issue KEY '{}' --desc-file PATH --append` does the
+fetch-and-concatenate automatically (lossless — the existing ADF is never
+round-tripped through markdown). The manual flow below is for insert/prepend
+or section-targeted edits:
 ```
 DEFAULT (append):  fetch current description, parse ADF, append new nodes, PUT
 REPLACE ("replace"/"overwrite"):  PUT with new ADF only
