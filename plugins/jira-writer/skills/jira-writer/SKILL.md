@@ -76,7 +76,7 @@ jira-writer add_comment PROJ-123 "## Update
 
 - [x] Done" --markdown
 
-# Link issues — DIRECTION: the FIRST key carries the outward verb.
+# Link issues — DIRECTION: reads as a sentence, the FIRST key performs the verb.
 # "PROJ-1 Blocks PROJ-2" ⇒ PROJ-1 blocks PROJ-2 (PROJ-2 is blocked by PROJ-1).
 jira-writer link_issues PROJ-1 Blocks PROJ-2
 jira-writer get_link_types              # valid type names + inward/outward wording

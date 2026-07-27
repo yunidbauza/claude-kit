@@ -383,9 +383,11 @@ BASH
 
   local out
   out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" link_issues HB-1 Blocks HB-2 2>/dev/null)
-  # DIRECTION: arg1 is the OUTWARD issue (carries "blocks"); arg3 is INWARD
-  # ("is blocked by"). Getting this backwards is the classic issue-link bug.
-  jq -e '.type.name == "Blocks" and .outwardIssue.key == "HB-1" and .inwardIssue.key == "HB-2"' \
+  # DIRECTION (verified against live Jira link objects): the issue that
+  # PERFORMS the outward verb ("blocks") is the link's INWARD issue, so
+  # arg1 → inwardIssue and arg3 → outwardIssue. Mapping arg1 to
+  # outwardIssue is the inversion this regression test pins.
+  jq -e '.type.name == "Blocks" and .inwardIssue.key == "HB-1" and .outwardIssue.key == "HB-2"' \
     "$mock_log" >/dev/null \
     || fail "link_issues direction wrong. body: $(cat "$mock_log")"
   echo "$out" | jq -e '.api == "rest" and .data.success == true' >/dev/null \
@@ -393,7 +395,7 @@ BASH
 
   PATH=$(echo "$PATH" | sed -e "s|$mock_dir:||")
   rm -rf "$mock_dir"
-  pass "link_issues posts correct direction (arg1=outward=blocker)"
+  pass "link_issues posts correct direction (arg1=inward=performs the verb)"
 }
 
 test_link_issues_arity() {

@@ -88,11 +88,15 @@ Bash tool shell, so it expands to empty and fails.
    and token scope.
 8. **REST vs MCP fallback** — REST preferred; MCP fallback is automatic for simple
    content only. Complex content has no MCP fallback.
-9. **Issue-link direction** — in `link_issues OUT TYPE IN` (and the REST
-   `/issueLink` body) the **outward** issue carries the type's outward
-   description: `link_issues A Blocks B` ⇒ "A blocks B" (B "is blocked by A").
-   Reading `get_issue` output: an `issuelinks` entry containing `inwardIssue: X`
-   means "is blocked by X"; `outwardIssue: Y` means "blocks Y". Beware: the
-   Atlassian MCP `createIssueLink` tool has an open bug that **inverts** the
-   direction (atlassian/atlassian-mcp-server#112) — after creating a link via
-   the MCP fallback, verify with `get_issue` and re-create if reversed.
+9. **Issue-link direction** — `link_issues FROM TYPE TO` reads as a sentence:
+   `link_issues A Blocks B` ⇒ "A blocks B" (B "is blocked by A"). Under the
+   hood the mapping is counterintuitive (verified against live link objects,
+   `GET /issueLink/{id}`): in the REST `/issueLink` body the issue that
+   PERFORMS the outward verb ("blocks") is the link's **inwardIssue**, and
+   the receiving issue is the **outwardIssue** — so the wrapper POSTs
+   FROM→inwardIssue, TO→outwardIssue. Never assume outwardIssue carries the
+   outward description; that "obvious" reading inverts every link. Reading
+   `get_issue` output is unaffected: an `issuelinks` entry containing
+   `inwardIssue: X` means "is blocked by X"; `outwardIssue: Y` means
+   "blocks Y". After creating a link via the MCP fallback, verify the
+   direction with `get_issue` and re-create if reversed.

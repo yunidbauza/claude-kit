@@ -1,5 +1,24 @@
 # Changelog — jira-writer
 
+## 1.8.1 — 2026-07-27
+
+### Fixed
+- **`link_issues` created every link inverted.** `link_issues A Blocks B`
+  produced "A is blocked by B" (field report from real ticket workflows).
+  Verified against live Jira link objects (`GET /issueLink/{id}`) on
+  known-direction links plus a create→inspect→delete round-trip: in Jira's
+  model the issue that PERFORMS the link type's outward verb ("blocks") is
+  stored as the link's **inwardIssue** — the opposite of the "obvious"
+  reading (and of the Atlassian KB summary the 1.7.0 implementation relied
+  on). The wrapper now POSTs arg1→inwardIssue / arg3→outwardIssue, so
+  `link_issues A Blocks B` genuinely yields "A blocks B". Arg order is
+  unchanged (still reads as the sentence); anyone who pre-swapped args to
+  work around the bug must un-swap.
+- MCP fallback params encode the same corrected mapping; the "MCP inverts
+  direction" warning is reframed — that reported bug appears to be this
+  same misreading. `get_issue` READING guidance was already correct.
+- Direction regression test flipped to pin the verified mapping.
+
 ## 1.8.0 — 2026-07-24
 
 Backport of three adversarial-review rounds run against the jira-mate port

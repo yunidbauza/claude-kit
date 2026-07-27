@@ -329,7 +329,7 @@ _usage_for_op() {
       lookup_user) echo "lookup_user QUERY" ;;
       add_worklog) echo "add_worklog KEY TIME_SPENT" ;;
       upload_attachment) echo "upload_attachment KEY FILE [name]" ;;
-      link_issues) echo "link_issues OUTWARD_KEY LINK_TYPE INWARD_KEY   # 'A Blocks B' = A blocks B" ;;
+      link_issues) echo "link_issues FROM_KEY LINK_TYPE TO_KEY   # 'A Blocks B' = A blocks B" ;;
       get_link_types) echo "get_link_types" ;;
       get_remote_links) echo "get_remote_links KEY" ;;
       test_connection) echo "test_connection" ;;
@@ -911,17 +911,18 @@ op_upload_attachment() {
 }
 
 # Get remote links operation
-# Link two issues. DIRECTION MATTERS: the first key is the OUTWARD issue,
-# which carries the link type's outward description — `link_issues A Blocks B`
-# means "A blocks B" (B shows "is blocked by A"). Getting this backwards is
-# the classic issue-link bug; keep arg order aligned with the sentence.
+# Link two issues. Reads as the sentence: `link_issues A Blocks B` means
+# "A blocks B" (B shows "is blocked by A"). DIRECTION (verified against live
+# Jira link objects): the issue performing the outward verb is stored as the
+# link's INWARD issue — arg1 → inwardIssue, arg3 → outwardIssue. Mapping
+# arg1 to outwardIssue is the classic inversion bug.
 op_link_issues() {
-    local outward_key="$1" link_type="$2" inward_key="$3"
+    local from_key="$1" link_type="$2" to_key="$3"
 
     local mcp_params _note
-    mcp_params=$(jq -n --arg type "$link_type" --arg out "$outward_key" --arg in "$inward_key" \
-        '{type: $type, outwardIssue: $out, inwardIssue: $in}')
-    _note="WARNING: the Atlassian MCP createIssueLink tool has an open bug that INVERTS link direction (atlassian/atlassian-mcp-server#112). If you create the link via MCP, verify the direction afterwards with get_issue and re-create if reversed."
+    mcp_params=$(jq -n --arg type "$link_type" --arg from "$from_key" --arg to "$to_key" \
+        '{type: $type, inwardIssue: $from, outwardIssue: $to}')
+    _note="Jira link direction is counterintuitive: the issue that performs the outward verb ('blocks') is the link's inwardIssue. These params already encode that. After creating via MCP, verify the direction with get_issue and re-create if reversed."
 
     # Check REST availability
     if ! check_rest_available; then
@@ -931,11 +932,11 @@ op_link_issues() {
 
     # Try REST API (POST /issueLink returns 201 with an empty body)
     local result
-    if result=$(jira_link_issues "$outward_key" "$link_type" "$inward_key" 2>&1); then
+    if result=$(jira_link_issues "$from_key" "$link_type" "$to_key" 2>&1); then
         if [[ -n "$result" ]]; then
             output_rest_success "$result"
         else
-            output_rest_success "$(jq -n --arg link "$outward_key $link_type $inward_key" \
+            output_rest_success "$(jq -n --arg link "$from_key $link_type $to_key" \
                 '{success: true, link: $link}')"
         fi
         return 0
@@ -1077,7 +1078,7 @@ print_usage() {
     echo "  get_transitions KEY              - Get available transitions" >&2
     echo "  transition_issue KEY TRANSITION_ID - Transition issue status" >&2
     echo "  search_jql JQL [max_results]     - Search with JQL" >&2
-    echo "  link_issues OUT TYPE IN          - Link issues ('A Blocks B' = A blocks B)" >&2
+    echo "  link_issues FROM TYPE TO         - Link issues ('A Blocks B' = A blocks B)" >&2
     echo "  get_link_types                   - List link type names + directions" >&2
     echo "  get_projects [max_results]       - List visible projects" >&2
     echo "  get_issue_types PROJECT          - Get issue types for project" >&2
