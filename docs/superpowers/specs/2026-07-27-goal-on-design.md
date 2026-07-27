@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-27
 **Plugin:** `workstream` (1.3.0 → 1.4.0)
-**Status:** approved, ready for implementation planning
+**Status:** implemented and merged. Two verification gaps accepted knowingly — the
+stop-rule trip and the code route are unexercised; see *Verification results*.
 
 ## Summary
 
