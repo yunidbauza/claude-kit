@@ -107,3 +107,49 @@ Command output appended here as work proceeds. The verifier reads this.
 `turn_budget` is 8 because `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` defaults to 8
 consecutive blocks — the harness abandons the loop above that, so a larger number
 would never fire. Raise the env var first if a bigger budget is genuinely needed.
+
+## Phase 1 — Structure (interactive)
+
+Do all of this before touching any deliverable.
+
+**1. Check the gates.** The hook needs a trusted workspace and unrestricted hooks.
+If `disableAllHooks` or `allowManagedHooksOnly` is set, or the workspace is
+untrusted, say so plainly now and continue in degraded mode — the brief is still
+worth writing, but nothing will enforce persistence. Never arm silently and let the
+user believe the goal is being held.
+
+**2. Extract the Task.** One sentence naming the objective, not the symptom. "Users
+see stale prices" is a symptom; "make the price cache invalidate on write" is a
+task. If the prompt supports several readings, that is a Phase 1 question, not a
+guess.
+
+**3. Assess the Scope against the codebase.** Actually look — do not infer from the
+prompt. Establish which files are affected, whether migrations are involved, which
+package dependencies are touched, and whether sibling repos are implicated. Record
+concrete paths, not categories.
+
+**4. Draft Constraints and Outcome.** Outcome items must be *checkable by someone
+else*: each one names the artifact or the command that proves it. "Caching works"
+is not an Outcome. "`pnpm test src/cache` passes and the recorded output shows 0
+failures" is.
+
+**5. Ask everything now, in one batch.** Every genuine uncertainty in Constraints or
+Outcome becomes a numbered multiple-choice question via `AskUserQuestion`. One
+batch, not a drip. This is the last chance — after Phase 1 the hook will refuse to
+let the turn end, so an unasked question becomes a guess that burns the budget.
+
+**6. Set the route.**
+
+- `artifact` — research, slides, documents, Jira or Confluence updates, throwaway
+  scripts. Anything not destined to be merged.
+- `code` — changes intended to merge into a repo.
+
+Mixed outcomes take the `code` route; the artifact half rides along as Outcome
+items.
+
+**7. Write the brief and present it.** Write
+`~/.claude/workstream/goal-on/<session-id>.md` with `status: ACTIVE`, then show the
+five sections to the user.
+
+**User approval here is the only planned gate in the skill.** Do not proceed to
+Phase 2 without it. If the user amends anything, rewrite the brief and re-present.
