@@ -149,7 +149,8 @@ branch (`$DEFAULT` — usually `main`).
 2. If nothing matches, check the PR title and body: `gh pr view --json title,body`.
 
 If a key is found: **invoke the `jira-writer:jira-writer` skill** (never raw Jira REST/curl —
-jira-writer handles credentials) and transition the
+jira-writer handles credentials; if jira-writer isn't installed, use the
+Atlassian MCP (Rovo) tools directly) and transition the
 ticket to **Done**. If no ticket reference exists anywhere, skip this step and note
 it in the final report.
 

@@ -27,7 +27,7 @@ ready-for-review — the single CI trigger — only once the review passes.
 **0. Resolve the ticket key.** Take it from the arguments (`PROJ-123` — any Jira
 project, pattern `[A-Za-z]+-[0-9]+`, uppercased). No key given → ask the user.
 
-**1. Fetch the ticket** with the `jira-writer:jira-writer` skill (never raw REST/curl). Keep
+**1. Fetch the ticket** with the `jira-writer:jira-writer` skill (never raw REST/curl; if jira-writer isn't installed, use the Atlassian MCP (Rovo) tools instead — either is fine). Keep
 the fetch lean — context bloat starts here:
 
 - Fetch the **full body** of the target ticket only.
@@ -146,7 +146,7 @@ that moment.
   report ("no deviations, so I'll proceed") → the gate applies with zero deviations
   too.
 - "The ticket is recent, it can't have drifted" → sibling stories merge daily.
-- Raw Jira REST/curl instead of jira-writer.
+- Raw Jira REST/curl instead of jira-writer or the Atlassian MCP.
 - Working in the shared checkout instead of an isolated worktree.
 - Creating the worktree off the current dirty branch instead of the freshly fetched
   default branch.

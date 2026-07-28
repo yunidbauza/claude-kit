@@ -127,7 +127,7 @@ Then, in order:
 3. **Now** transition the linked Jira ticket to **In Review** (this is the step
    nothing else performs): parse the ticket key from the PR's `headRefName`
    (`[A-Za-z]+-[0-9]+`, case-insensitive, uppercased; fall back to title/body) and
-   transition via `jira-writer:jira-writer` — unless the ticket is already In Review
+   transition via `jira-writer:jira-writer` (or the Atlassian MCP (Rovo) tools if jira-writer isn't installed) — unless the ticket is already In Review
    or later; never move a ticket backward. No key found → skip and note it.
 
 ## Step 4 — Wait for CI
