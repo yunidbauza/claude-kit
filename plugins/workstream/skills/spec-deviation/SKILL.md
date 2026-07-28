@@ -16,7 +16,7 @@ places — the PR, the ticket, and the downstream tickets that inherit the chang
 assumption. Missing the third is the common failure: sibling stories then get built
 on the old spec.
 
-All Jira writes go through the `jira-writer:jira-writer` skill (never raw REST/curl).
+All Jira writes go through the `jira-writer:jira-writer` skill (never raw REST/curl); if jira-writer isn't installed, use the Atlassian MCP (Rovo) tools instead.
 
 This skill is workspace-agnostic: every write targets the PR (`gh api`) or Jira,
 both of which work identically from a `work-on` worktree or a plain checkout. No
