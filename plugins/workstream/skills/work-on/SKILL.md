@@ -30,12 +30,20 @@ project, pattern `[A-Za-z]+-[0-9]+`, uppercased). No key given → ask the user.
 **1. Fetch the ticket** with the `jira-writer:jira-writer` skill (never raw REST/curl; if jira-writer isn't installed, use the Atlassian MCP (Rovo) tools instead — either is fine). Keep
 the fetch lean — context bloat starts here:
 
-- Fetch the **full body** of the target ticket only.
+- Fetch the **full body and all comments** of the target ticket.
 - Fetch the Epic's **summary** (title + short description), not its full body.
-- List sibling stories as **titles + keys + status only** — do NOT pull their
-  bodies.
-- Fetch the **full body** of only the issues **directly linked** to the target
-  (blocking/blocked-by/relates). Unlinked siblings stay title-only.
+- List sibling stories as **titles + keys + status**, and read **their comments**
+  for anything that amends scope, decisions, or acceptance criteria — pull those in;
+  skip their bodies and status-noise/chatter.
+- Fetch the **full body and comments** of only the issues **directly linked** to the
+  target (blocking/blocked-by/relates). Unlinked siblings stay title + comment-scan
+  only.
+
+Comments are where a written spec gets quietly overridden ("skip the migration",
+"endpoint moved to /v2", "read-path only, follow-up ticket for writes"). Treat a
+comment that amends scope, decisions, or acceptance criteria as **authoritative over
+the description**, and carry those amendments — and any description-vs-comment
+contradiction — into the reconciliation as candidate deviations.
 
 **2. Reconcile ticket vs codebase (subagents).** Dispatch 1–3 parallel `Explore`
 subagents (reading + pattern-matching — a cheaper model is fine). Scope exploration
@@ -45,8 +53,10 @@ to the ticket itself and the linked issues from Step 1:
 - Do the file paths, module names, schemas, and interfaces the ticket references
   still match reality?
 - Did the **linked** prior work change assumptions the ticket relies on?
+- Do the ticket's comments (or a linked/sibling ticket's) amend the description — a
+  scope cut, a changed approach, a decision — and does the code already reflect it?
 
-Give each subagent the relevant ticket excerpt and ask for a short verdict plus
+Give each subagent the relevant ticket excerpt — the body plus the spec-affecting comments surfaced in Step 1 — and ask for a short verdict plus
 concrete `file:line` evidence per mismatch — not full file dumps. If the ticket
 spans multiple repos, reconcile against each affected repo.
 
@@ -146,6 +156,9 @@ that moment.
   report ("no deviations, so I'll proceed") → the gate applies with zero deviations
   too.
 - "The ticket is recent, it can't have drifted" → sibling stories merge daily.
+- Reconciling against the ticket description alone while a comment already changed
+  the spec → read the comments; one that amends scope/decisions/acceptance criteria
+  wins over the body.
 - Raw Jira REST/curl instead of jira-writer or the Atlassian MCP.
 - Working in the shared checkout instead of an isolated worktree.
 - Creating the worktree off the current dirty branch instead of the freshly fetched
