@@ -76,11 +76,22 @@ worktree exists.
 ## Step 3: Squash merge
 
 ```bash
-gh pr merge --squash --delete-branch
+gh pr merge <N> --squash
 ```
 
+Do **not** pass `--delete-branch`. merge-pr usually runs from inside the PR's
+worktree (the default for `work-on` tickets), and `--delete-branch` makes gh
+switch the current checkout to the default branch so it can delete the local
+branch — but the default branch is already checked out in the main working tree,
+so git aborts with `fatal: '<default>' is already used by worktree …`. The remote
+merge still succeeds, but gh exits non-zero on that error and leaves local cleanup
+half done. Step 4 owns all branch teardown — the worktree, the local branch, AND
+the remote branch — deterministically from the main working tree, so gh never
+touches the local checkout.
+
 If the user wants to review or edit the squash commit message first, open
-`gh pr view --web` and let them complete the merge manually.
+`gh pr view --web` and let them complete the merge manually (still without
+`--delete-branch`).
 
 ## Step 4: Clean up the local workspace
 
@@ -106,6 +117,7 @@ cd "$MAIN_WT"
 git worktree remove "$WT_PATH" --force   # --force: after a squash the branch has commits not on local main
 git worktree prune
 git branch -D "$BRANCH"                  # the branch ref lingers after the worktree is removed
+git push origin --delete "$BRANCH"       # gh no longer deletes the remote branch; harmless if it is already gone
 git checkout "$DEFAULT"
 git pull origin "$DEFAULT"
 ```
@@ -116,6 +128,7 @@ git pull origin "$DEFAULT"
 git checkout "$DEFAULT"
 git pull origin "$DEFAULT"
 git branch -d "$BRANCH"
+git push origin --delete "$BRANCH"   # Step 3 no longer uses --delete-branch, so tear the remote branch down here
 ```
 
 If `git branch -d` refuses because the branch is not fully merged locally (expected
@@ -147,9 +160,9 @@ it in the final report.
 | CI failing | Stop. Report the failing check. Do not merge. |
 | CI not yet run | Wait for checks to complete. Do not skip. |
 | Merge conflict | Resolve via Step 2 (understand both intents, verify, push). Abort and report for confirmation if the resolution breaks/changes previously merged functionality. |
-| Remote branch already deleted | Proceed — the PR was already merged elsewhere. |
+| Remote branch already deleted (auto-delete-on-merge, or a prior run) | `git push origin --delete` prints "remote ref does not exist" — treat as success and proceed. |
 | `git branch -d` refused | Use `-D` after confirming the squash succeeded remotely. |
-| Local branch already deleted (gh removed it during merge) | Proceed — nothing to clean up. |
+| `gh pr merge` aborts with "already used by worktree" | Only if `--delete-branch` was passed (Step 3 omits it). The remote merge already succeeded — ignore the error and let Step 4 own cleanup. |
 | `git worktree remove` refused (dirty) | Add `--force`; the remote squash is authoritative. |
 | Worktree already gone | Skip removal; run `git worktree prune` + branch delete, proceed. |
 | Jira ticket not found | Skip Step 5. Note it to the user. |
