@@ -85,6 +85,7 @@ turns_used: 0
 turn_budget: 8
 created: 2026-07-27T14:30:00Z
 branch: goal/widget-cache   # code route only
+workspace: worktree        # code route only — "current" (in place) or "worktree" (isolation-guarded / background session)
 ---
 
 ## Task
@@ -150,6 +151,14 @@ let the turn end, so an unasked question becomes a guess that burns the budget.
 Mixed outcomes take the `code` route; the artifact half rides along as Outcome
 items.
 
+For the `code` route, decide the **workspace** now and record it in the brief's
+`workspace` field. An interactive foreground session uses `current` (work in the
+checkout in place). A background or `claude agents` session — or any session whose
+isolation guard rejects edits to the shared checkout — MUST use `worktree`: Phase 2
+is autonomous and cannot switch workspaces mid-run, and fighting the guard in the
+shared checkout will fail. When unsure whether the guard is active, choose
+`worktree` — it is always safe.
+
 **7. Write the brief and present it.** Write
 `~/.claude/workstream/goal-on/<session-id>.md` with **`status: PENDING-APPROVAL`**,
 then show the five sections to the user and end the turn.
@@ -183,18 +192,28 @@ Jira issue actually changed. Append the evidence. Write `status: DONE`.
 ### Route: code
 
 1. `git fetch origin`
-2. Confirm the working tree is clean. If it is dirty, this should have surfaced in
-   Phase 1 — stop, set `status: NEEDS-DECISION`, and ask. Never branch over
-   uncommitted work.
-3. Branch off the repo's default branch:
+2. If you will work in the current checkout, confirm its working tree is clean; if
+   dirty, this should have surfaced in Phase 1 — stop, set `status: NEEDS-DECISION`,
+   and ask. (A fresh worktree is clean by construction, so this applies only to the
+   in-place case.) Never branch over uncommitted work in the shared checkout.
+3. Set up the workspace decided in Phase 1, then branch `goal/<slug>` off the
+   default branch:
 
 ```bash
 DEFAULT=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
-git checkout -b goal/<slug> "origin/$DEFAULT"
 ```
 
-Work in the current checkout — no worktree. Record the branch name in the brief
-header.
+   - **`workspace: current`** (interactive foreground session) → branch in the
+     current checkout: `git checkout -b goal/<slug> "origin/$DEFAULT"`.
+   - **`workspace: worktree`** (background / `claude agents` session, or any session
+     whose isolation guard rejects edits to the shared checkout) → do NOT write to
+     the shared checkout; the guard will reject it. Create an isolated worktree first
+     with `superpowers:using-git-worktrees` (it prefers the native `EnterWorktree`
+     tool and falls back to `git worktree add`), branch `goal/<slug>` off
+     `origin/$DEFAULT` inside it, and do all Phase 2 work there.
+
+Record the branch name — and the worktree path, if any — in the brief header. The
+workspace was chosen in Phase 1; Phase 2 is autonomous and cannot pause to switch.
 
 4. Implement. Multiple files are expected and fine.
 5. Verify with the repo's own checks — discover them from `CLAUDE.md`,
@@ -250,7 +269,9 @@ carry a `skillRoot`, which this one does.
   section, not the conversation, and absent evidence is unmet.
 - Re-invoking `goal-on` while a goal is active → each invocation registers another
   verifier, doubling the per-turn cost for no benefit. Amend the brief instead.
-- Creating a worktree → `goal-on` works in the current checkout by design.
+- Forcing the current checkout in a background / `claude agents` / isolation-guarded
+  session → its guard rejects edits to the shared checkout; use `workspace: worktree`
+  there. (An interactive foreground session still works in place.)
 - Branching off the current branch instead of the freshly fetched default branch.
 - Waiting for the merge → `goal-on` ends at draft PR plus ship handoff.
 - Marking a UI change verified on green tests alone → drive it in a browser.
