@@ -99,7 +99,7 @@ moved it; check the current status first.
 
 **6. Plan and implement.** Hand off to the normal superpowers flow:
 `superpowers:brainstorming` for design (restate the reconciliation findings from
-Step 2 as input there), then `superpowers:writing-plans`, then plan execution, then
+Step 2 as input there), then `superpowers:writing-plans`, then execute the plan (choosing inline vs subagents automatically — see below), then
 `superpowers:finishing-a-development-branch` to produce the PR. **For tickets with
 a UI surface:** the brainstorm must present design options as browser-rendered HTML
 mockups with 2–3 variants (ASCII mockups only if the user asks); and the **final
@@ -107,6 +107,45 @@ implementation check, before the draft PR is opened, must drive the built UI in 
 real browser** (Playwright/e2e specs for the touched surface, or the `verify` skill)
 to confirm it renders and behaves as designed — green type-check/unit tests do not
 prove a UI works.
+
+**Choose the execution mode automatically — inline by default, subagents only when
+the plan earns it.** `superpowers:writing-plans` ends by offering an execution choice
+(subagent-driven vs inline). Do NOT ask the user, and do NOT reflexively pick
+subagents: subagent-driven runs an implementer **and** a reviewer per task and is
+markedly slower. Decide from the finished plan and state the decision in one line
+before executing.
+
+**Default to inline** (`superpowers:executing-plans`) — the controller runs the plan
+in-session; fastest, and the plan already carries the full spec. **Escalate to
+subagent-driven** (`superpowers:subagent-driven-development`) only when holding the
+whole plan in one context would crowd it or hurt quality. Judge that — don't count
+files blindly — from:
+
+- **Task count** — more than ~5–6 tasks is a signal, not a hard cliff. A 7-task plan
+  of trivial mechanical edits can still run inline; a 4-task plan that rewrites core
+  modules warrants subagents.
+- **Context footprint** — assess the plan's File Structure: the number **and size**
+  of the files it creates/modifies, test files included, and how much code each task
+  carries. Escalate when running inline would balloon the controller's context and
+  risk a mid-run compaction. A handful of large modules with full sibling test suites
+  is far heavier than a dozen one-line edits — weigh the code, don't count files.
+- **Cross-cutting / high-risk** — one plan spanning multiple stacks or subsystems
+  (e.g. a schema/migration + API + UI change together), or touching
+  security/auth/concurrency/money paths where a fresh per-task adversarial review
+  materially lowers risk.
+
+The choice is **whole-plan** (one mode for the entire plan) and **announced**: e.g.
+"7 tasks across API+UI, heavy footprint → subagent-driven" or "3 mechanical tasks,
+4 small files → inline". Two hard overrides:
+
+- **Tightly-coupled tasks** (one can't be implemented or reviewed without another in
+  the same edit) → **inline** regardless of size; subagent-driven assumes
+  mostly-independent tasks.
+- An explicit **user preference** in the request ("work on … inline" / "… with
+  subagents") **wins** over the rule.
+
+If you choose subagent-driven, apply the CWD contract below. If inline, the
+controller's own CWD is the worktree, so commits are safe and no contract is needed.
 
 **Subagent commits must land in the worktree, not the shared checkout.** If you
 execute the plan with `superpowers:subagent-driven-development`, mind a CWD gap: a
