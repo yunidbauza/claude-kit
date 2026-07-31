@@ -1,0 +1,52 @@
+name: marketplace manifest
+
+on:
+  push:
+    paths:
+      - 'plugins/*/.claude-plugin/plugin.json'
+      - '.claude-plugin/marketplace.json'
+      - '.github/workflows/marketplace-manifest.yml'
+  pull_request:
+    paths:
+      - 'plugins/*/.claude-plugin/plugin.json'
+      - '.claude-plugin/marketplace.json'
+      - '.github/workflows/marketplace-manifest.yml'
+  workflow_dispatch:
+
+jobs:
+  version-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Every plugin is listed in marketplace.json at its own version
+        run: |
+          failed=0
+          for manifest in plugins/*/.claude-plugin/plugin.json; do
+            dir="${manifest%/.claude-plugin/plugin.json}"
+            name=$(jq -r '.name' "$manifest")
+            plugin_version=$(jq -r '.version' "$manifest")
+
+            entry=$(jq -r --arg n "$name" '.plugins[] | select(.name == $n)' .claude-plugin/marketplace.json)
+            if [[ -z "$entry" ]]; then
+              echo "::error file=.claude-plugin/marketplace.json::$name ($dir) is not listed in marketplace.json"
+              failed=1
+              continue
+            fi
+
+            marketplace_version=$(jq -r '.version' <<<"$entry")
+            marketplace_source=$(jq -r '.source' <<<"$entry")
+            printf '%-14s plugin.json=%-8s marketplace.json=%-8s source=%s\n' \
+              "$name" "$plugin_version" "$marketplace_version" "$marketplace_source"
+
+            if [[ "$plugin_version" != "$marketplace_version" ]]; then
+              echo "::error file=.claude-plugin/marketplace.json::$name version mismatch: plugin.json=$plugin_version marketplace.json=$marketplace_version"
+              failed=1
+            fi
+            if [[ "$marketplace_source" != "./$dir" ]]; then
+              echo "::error file=.claude-plugin/marketplace.json::$name source mismatch: expected ./$dir, got $marketplace_source"
+              failed=1
+            fi
+          done
+          exit $failed
