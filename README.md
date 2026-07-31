@@ -1,262 +1,69 @@
-# Jira Writer
+# claude-kit
 
-Claude Code plugin for creating and updating Jira Cloud tickets with rich content, including automatic Mermaid diagram embedding and interactive checkboxes.
+Claude Code plugins by Yunid Bauza. Two plugins that stack: **jira-writer** does the Jira I/O, **workstream** drives a ticket from "start work" to "merged and Done" on top of it.
 
 ## Installation
 
-### From GitHub
-
-First, add the repository as a marketplace:
+Add the marketplace once:
 
 ```bash
 /plugin marketplace add yunidbauza/claude-kit
 ```
 
-Then install the plugin:
+Then install whichever you want:
 
 ```bash
 /plugin install jira-writer
+/plugin install workstream
 ```
 
-### Manual Installation
+| Plugin | What it does | Docs |
+| ------ | ------------ | ---- |
+| **jira-writer** | Read, search, create, and update Jira Cloud tickets — rich ADF content, Mermaid diagrams, interactive checkboxes | [plugins/jira-writer](plugins/jira-writer/README.md) |
+| **workstream** | Jira ticket → worktree → PR → review loop → merge → ticket Done | [plugins/workstream](plugins/workstream/README.md) |
 
-```bash
-git clone https://github.com/yunidbauza/claude-kit.git /tmp/claude-kit
-cp -r /tmp/claude-kit/plugins/jira-writer ~/.claude/plugins/
-chmod +x ~/.claude/plugins/jira-writer/skills/jira-writer/scripts/*.sh
-rm -rf /tmp/claude-kit
-```
-
-## Prerequisites
-
-| Dependency | Purpose | Required |
-| ---------- | ------- | -------- |
-| `JIRA_DOMAIN` | Your Jira Cloud domain | Yes |
-| `JIRA_API_KEY` | REST API auth (`email:token`) | Yes |
-| Atlassian MCP | Fallback when REST fails | No (optional) |
-| `mmdc` | Mermaid CLI for diagrams | For diagrams only |
-
-**jira-writer** also benefits from Node 18+ when present — enables the markdown-to-ADF converter and ADF validator. Without Node, plain-text and pre-built-ADF paths still work.
-
-## Environment Setup
-
-```bash
-# Required for REST API (primary method)
-export JIRA_DOMAIN="company.atlassian.net"
-export JIRA_API_KEY="your-email@company.com:your-api-token"
-
-# Optional: for Mermaid diagrams
-npm install -g @mermaid-js/mermaid-cli
-```
-
-### Getting Your API Token
-
-1. Go to <https://id.atlassian.com/manage-profile/security/api-tokens>
-2. Click "Create API token"
-3. Give it a label and copy the token
-4. Set `JIRA_API_KEY` as `your-email@company.com:your-token`
-
-**Important:** Store the raw `email:token` format. The scripts handle base64 encoding internally.
-
-### Verify Setup
-
-```bash
-# Test connection
-~/.claude/plugins/jira-writer/skills/jira-writer/scripts/test-jira-connection.sh
-
-# Check all prerequisites
-~/.claude/plugins/jira-writer/skills/jira-writer/scripts/check-prerequisites.sh
-```
-
-## Features
-
-- **Ticket Management** - Create, update, comment, transition, and search Jira issues
-- **Rich Formatting** - Headings, bold, italic, links, code blocks, tables
-- **Interactive Checkboxes** - `- [ ]` and `- [x]` as clickable task lists with auto-generated `localId` UUIDs
-- **Mermaid Diagrams** - Auto-convert and embed as images
-- **Markdown -> ADF Conversion** - Pass `--desc-file PATH` or `--markdown` and the wrapper converts (vendored `marked` v13, no npm install)
-- **Pre-flight ADF Validation** - Catches mark exclusivity, missing `localId`, malformed `tableCell` attrs, and other `INVALID_INPUT` causes client-side before they hit Jira
-- **Epic Parenting** - `--parent KEY` on `create_issue` with format validation
-- **Smart Failure Routing** - Plain-text REST failures fall back to MCP; ADF/markdown failures hard-error (MCP can't retry rich content)
-
-### Supported Diagram Types (11)
-
-| Type | Syntax | Type | Syntax |
-| ------ | -------- | ------ | -------- |
-| Flowchart | `graph TD` | Sequence | `sequenceDiagram` |
-| Class | `classDiagram` | State | `stateDiagram-v2` |
-| ER | `erDiagram` | Gantt | `gantt` |
-| Pie | `pie` | Mindmap | `mindmap` |
-| User Journey | `journey` | Timeline | `timeline` |
-| Quadrant | `quadrantChart` | | |
-
-## Usage
-
-The skill activates contextually when you:
-
-- Ask to create or update a Jira ticket
-- Provide content with Mermaid diagrams
-- Reference a markdown file for ticket content
-
-### Examples
-
-```text
-"Create a ticket for the authentication feature"
-"Update PROJ-123 with this description"
-"Add a sequence diagram showing the auth flow to PROJ-456"
-"Create a ticket with acceptance criteria:
- - [ ] User can login
- - [x] Remember me works"
-"Create a story from /tmp/oauth-spec.md and attach it to epic PROJ-100"
-"Validate this ADF file before I send it"
-```
-
-## How It Works
-
-The plugin uses **REST API as the primary method**. MCP is a fallback only for plain-text inputs (the only path MCP can actually retry without losing fidelity).
-
-```text
-┌──────────────────────────────────────────────────────────────────────────┐
-│                          Jira Writer Skill                                │
-├──────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│   ┌──────────────────────────────────────────────────────────────────┐   │
-│   │                      jira-api-wrapper.sh                          │   │
-│   │   resolves input mode -> validates ADF -> dispatches REST call    │   │
-│   └──────────────────────────────────────────────────────────────────┘   │
-│         │                       │                          │             │
-│         ▼                       ▼                          ▼             │
-│   ┌───────────┐         ┌────────────────┐        ┌────────────────┐    │
-│   │  REST     │         │ markdown-to-   │        │ adf-validate   │    │
-│   │  (always  │         │ adf.mjs        │        │ .mjs           │    │
-│   │  primary) │         │ (Node 18+)     │        │ (Node 18+)     │    │
-│   └───────────┘         └────────────────┘        └────────────────┘    │
-│         │                                                                │
-│         ▼ on 4xx                                                         │
-│   plain text -> api:"mcp_fallback" (MCP can retry)                       │
-│   ADF/markdown -> api:"error" (MCP cannot retry rich content)            │
-│                                                                          │
-└──────────────────────────────────────────────────────────────────────────┘
-```
-
-### Input Modes & Failure Routing
-
-| Input mode                                  | REST 4xx envelope    | Notes                                                  |
-| ------------------------------------------- | -------------------- | ------------------------------------------------------ |
-| Plain text (positional `DESC`)              | `api:"mcp_fallback"` | MCP retry is viable; unchanged from v1.4              |
-| Markdown via `--desc-file PATH`             | `api:"error"`        | Converted to ADF, then validated client-side          |
-| Markdown via `--markdown`                   | `api:"error"`        | Same as above, with inline string                     |
-| Pre-built ADF (raw JSON in positional arg)  | `api:"error"`        | Passthrough + pre-flight validation                   |
-| Mermaid diagrams / attachments              | `api:"error"`        | Always REST-only; no MCP fallback                     |
-
-## Scripts
-
-| Script | Purpose |
-| ------ | ------- |
-| `test-jira-connection.sh` | Test API connectivity and auth |
-| `check-prerequisites.sh` | Verify all dependencies (incl. Node 18+) |
-| `jira-api-wrapper.sh` | Unified interface (flag parsing, ADF routing, failure envelopes) |
-| `jira-rest-api.sh` | Core REST API functions |
-| `markdown-to-adf.mjs` | Node helper: markdown -> ADF (uses vendored `marked` v13) |
-| `adf-validate.mjs` | Node helper: lightweight ADF rule checks + `--bisect` mode |
-| `jira-mermaid-upload.sh` | Upload single diagram |
-| `jira-mermaid-batch-upload.sh` | Upload multiple diagrams |
-| `vendor/marked/` | Vendored `marked@13.0.3` ESM bundle (no npm install needed) |
-
-### Script Usage Examples
-
-```bash
-# Test your connection
-./scripts/test-jira-connection.sh
-
-# Check prerequisites (also reports Node availability)
-./scripts/check-prerequisites.sh
-
-# Get an issue
-./scripts/jira-api-wrapper.sh get_issue PROJ-123
-
-# Quick lookup — narrowed fields only
-./scripts/jira-api-wrapper.sh get_issue PROJ-123 --summary-only
-
-# Create an issue with a plain-text description (MCP fallback available on REST failure)
-./scripts/jira-api-wrapper.sh create_issue PROJECT "Task" "Summary" "Description"
-
-# Create a rich-content issue from a markdown file, attached to an epic
-./scripts/jira-api-wrapper.sh create_issue PROJECT "Story" "OAuth support" \
-  --desc-file /tmp/oauth-spec.md \
-  --parent PROJECT-172
-
-# Inline markdown comment with a checkbox
-./scripts/jira-api-wrapper.sh add_comment PROJ-123 \
-  "## Update
-
-- [x] Code review complete" --markdown
-
-# Locally validate ADF before sending (catches mark exclusivity, missing localId, etc.)
-./scripts/jira-api-wrapper.sh validate_adf /tmp/built-adf.json
-
-# Bisect to find the first failing block in a large ADF doc
-./scripts/jira-api-wrapper.sh validate_adf /tmp/built-adf.json --bisect
-
-# Direct REST API call
-./scripts/jira-rest-api.sh jira_get_issue PROJ-123
-
-# Upload a diagram
-./scripts/jira-mermaid-upload.sh PROJ-123 diagram.mmd
-```
-
-See [plugins/jira-writer/CHANGELOG.md](plugins/jira-writer/CHANGELOG.md) for v1.5.2 release notes.
-
-## Troubleshooting
-
-### REST API Connection Issues
-
-#### 401 Unauthorized
-
-- Verify `JIRA_API_KEY` format is `email:token` (not base64 encoded)
-- Regenerate API token at <https://id.atlassian.com/manage-profile/security/api-tokens>
-
-#### 404 Not Found
-
-- Check `JIRA_DOMAIN` is correct (e.g., `company.atlassian.net`)
-- Verify the issue key exists and you have access
-
-#### Connection Failed
-
-- Check network connectivity
-- Verify domain is reachable: `curl -I https://your-domain.atlassian.net`
-
-### MCP Fallback Not Working
-
-- MCP is optional; the plugin works fully with just REST API
-- If you want MCP fallback, configure it in Claude Code MCP settings
-
-### Diagram Upload Fails
-
-- Ensure `mmdc` is installed: `npm install -g @mermaid-js/mermaid-cli`
-- Diagrams require REST API (no MCP fallback)
-- Check diagram syntax by running: `mmdc -i diagram.mmd -o test.png`
-
-## Resources
-
-- [Atlassian Document Format](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/)
-- [Jira REST API](https://developer.atlassian.com/cloud/jira/platform/rest/v3/)
-- [Mermaid Documentation](https://mermaid.js.org/)
-
-## License
-
-MIT
+`workstream` uses `jira-writer` for every Jira read and write, so install both if you want the full workflow. `jira-writer` stands alone fine.
 
 ---
 
-## Also in this kit: workstream
+## jira-writer
 
-**[workstream](plugins/workstream/README.md)** — Jira-ticket-to-merge workflow.
-Five skills that chain end to end (each also independently invocable). Depends on
-jira-writer for all Jira access. Install with `/plugin install workstream`.
+Ticket I/O with content Jira actually accepts. REST is the primary path; MCP is a fallback only for plain text, since it can't retry rich content without losing fidelity.
 
+- **Ticket management** — create, update, comment, transition, search (JQL), list projects, look up users, link issues, upload attachments, log work
+- **Markdown → ADF** — pass `--desc-file PATH` or `--markdown` and the wrapper converts (vendored `marked` v13, no `npm install`)
+- **Pre-flight ADF validation** — catches mark exclusivity, missing `localId`, malformed `tableCell` attrs and other `INVALID_INPUT` causes client-side, before Jira rejects them; `--bisect` finds the first failing block in a large doc
+- **Interactive checkboxes** — `- [ ]` / `- [x]` become clickable task lists with generated `localId` UUIDs
+- **Mermaid diagrams** — 11 diagram types auto-rendered and embedded as images
+- **Lossless append** — `update_issue --append` concatenates onto the existing description ADF instead of replacing it
+- **Epic parenting** — `--parent KEY` on `create_issue`, with format validation
+
+**Requires** `JIRA_DOMAIN` and `JIRA_API_KEY` (raw `email:token`, not base64). Node 18+ is optional but enables the markdown converter and validator. `mmdc` is only needed for diagrams.
+
+```bash
+export JIRA_DOMAIN="company.atlassian.net"
+export JIRA_API_KEY="your-email@company.com:your-api-token"
 ```
-/workstream:work-on PROJ-123
+
+Full reference — script table, input modes, failure routing, troubleshooting — in [plugins/jira-writer/README.md](plugins/jira-writer/README.md).
+
+---
+
+## workstream
+
+Six skills covering the Jira-ticket → PR → merge lifecycle. They chain end to end, and each is independently invocable.
+
+| Command | Purpose |
+| ------- | ------- |
+| `/workstream:work-on <KEY>` | Fetch the ticket, reconcile spec vs codebase (hard user gate), set up an isolated worktree, hand off to design/plan/implement |
+| `/workstream:goal-on <prompt>` | Ad-hoc entry point for work with no ticket: rewrite a vague request into a Task/Scope/Constraints/Outcome/Stop-Rules brief, then drive it to a verified finish |
+| `/workstream:ship [PR] [--auto-merge]` | PR endgame: CI watch → self code review → findings triage loop → watch-until-approved with base-branch sync → merge |
+| `/workstream:review-pr-findings [PR]` | Adversarial triage of all PR feedback against a persistent per-PR ledger; loops until CI is green with no unresolved threads |
+| `/workstream:merge-pr [PR]` | Squash merge, worktree/branch teardown, default-branch pull, Jira ticket → Done |
+| `/workstream:spec-deviation` | Propagate a mid-work spec change to the PR, the ticket, and affected downstream tickets |
+
+```text
+/workstream:work-on PROJ-123            (or /workstream:goal-on "<vague request>")
       │  fetch ticket (jira-writer) · reconcile spec vs codebase
       │  ⛔ hard gate: report deviations, wait for user go-ahead
       │  isolated worktree off the fresh default branch
@@ -282,3 +89,34 @@ superpowers: brainstorm → plan → implement → PR created
 (anytime) /workstream:spec-deviation — propagate a mid-work spec change
           to the PR, the ticket, and affected downstream tickets
 ```
+
+Two design choices worth knowing before you use it:
+
+- **Worktrees by default** — every ticket gets an isolated worktree branched off the freshly fetched default branch, so concurrent sessions can't corrupt each other.
+- **Findings are claims, not instructions** — every piece of PR feedback is assessed (VALID / INVALID / NEEDS-USER-DECISION) before any fix. Invalid findings get a reasoned reply, and a per-PR ledger stops the same finding being re-litigated each round.
+
+**Requires** the `superpowers` plugin (it hands off to brainstorming, writing-plans, using-git-worktrees, TDD, and finishing-a-development-branch), the `jira-writer` plugin from this marketplace, and an authenticated `gh` CLI.
+
+Full reference — state files, config, conventions — in [plugins/workstream/README.md](plugins/workstream/README.md) and [plugins/workstream/docs/TICKET_WORKFLOW.md](plugins/workstream/docs/TICKET_WORKFLOW.md).
+
+---
+
+## Repository layout
+
+```text
+.claude-plugin/marketplace.json   marketplace manifest — lists every plugin
+plugins/<plugin>/
+  .claude-plugin/plugin.json      per-plugin manifest (name, version, skills)
+  skills/<skill>/SKILL.md         the skills themselves
+  README.md                       plugin docs
+```
+
+## Releasing
+
+Bump the version in **both** `plugins/<plugin>/.claude-plugin/plugin.json` and the plugin's entry in `.claude-plugin/marketplace.json`. Update checks read `plugin.json`, but the marketplace listing reads `marketplace.json` — let them drift and the listing advertises a version nobody has.
+
+CI enforces this: [`.github/workflows/marketplace-manifest.yml`](.github/workflows/marketplace-manifest.yml) checks every plugin's manifest against the marketplace entry (version and source path) and fails on any mismatch or missing entry.
+
+## License
+
+MIT
