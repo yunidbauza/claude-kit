@@ -10,12 +10,14 @@ import assert from 'node:assert/strict';
 import {
   decide,
   section,
-  uncheckedItems,
+  checkboxItems,
   hasEvidence,
   sessionIdOf,
   readPayload,
   splitFrontmatter,
   setHeaderStatus,
+  setHeaderField,
+  headerValue,
 } from './verify-goal.mjs';
 
 const brief = ({
@@ -160,9 +162,11 @@ test('section reads the final heading through end-of-string', () => {
   assert.match(section(body, 'Verification evidence'), /\$ cmd/);
 });
 
-test('uncheckedItems ignores ticked boxes and handles * bullets', () => {
-  assert.deepEqual(uncheckedItems('- [x] a\n- [ ] b\n* [ ] c\n'), ['b', 'c']);
-  assert.deepEqual(uncheckedItems('- [x] a\n'), []);
+test('checkboxItems ignores ticked boxes and handles * bullets', () => {
+  assert.deepEqual(checkboxItems('- [x] a\n- [ ] b\n* [ ] c\n').unchecked, ['b', 'c']);
+  assert.deepEqual(checkboxItems('- [x] a\n').unchecked, []);
+  assert.equal(checkboxItems('- [x] a\n- [ ] b\n').total, 2);
+  assert.equal(checkboxItems('no checkboxes here\n').total, 0);
 });
 
 test('hasEvidence ignores headings and whitespace', () => {
@@ -182,4 +186,90 @@ test('setHeaderStatus rewrites only the header status', () => {
   const out = setHeaderStatus(md, 'DONE');
   assert.match(out, /^status: DONE$/m);
   assert.match(out, /status: ACTIVE in the body stays/);
+});
+
+// --- regressions from the PR #30 self review ------------------------------------
+// Each of these previously produced a FALSE SUCCESS (a `DONE` stamp on a brief that
+// was not actually verified) or silently disabled the stop rule.
+
+test('no ## Outcome section: releases but never stamps DONE', () => {
+  const md = '---\nstatus: ACTIVE\nturns_used: 0\nturn_budget: 8\n---\n\n## Task\n\nx\n';
+  const r = decide(md);
+  assert.equal(r.action, 'allow');
+  assert.equal(r.write, undefined, 'unverifiable brief must not be marked DONE');
+});
+
+test('Outcome written as prose with no checkboxes: releases but never stamps DONE', () => {
+  const md = brief({ outcome: 'Ship the thing and make sure it works.\n' });
+  const r = decide(md);
+  assert.equal(r.action, 'allow');
+  assert.equal(r.write, undefined);
+});
+
+test('a heading-like line inside a fenced block does not truncate the Outcome', () => {
+  const outcome = [
+    '- [x] first',
+    '',
+    '```md',
+    '## not a heading',
+    '```',
+    '',
+    '- [ ] genuinely unfinished',
+    '',
+  ].join('\n');
+  const r = decide(brief({ outcome }));
+  assert.equal(r.action, 'block', 'the item after the fence must still be seen');
+  assert.match(r.reason, /genuinely unfinished/);
+});
+
+test('section still returns fenced evidence content intact', () => {
+  const body = '## Verification evidence\n\n```\n## output heading\nok\n```\n';
+  const out = section(body, 'Verification evidence');
+  assert.match(out, /## output heading/, 'masking must not delete fenced content');
+  assert.equal(hasEvidence(out), true);
+});
+
+test('an unrelated ## heading does not end a section (only siblings do)', () => {
+  const body = '## Outcome\n\n- [ ] a\n\n## Some Other Heading\n\n- [ ] b\n\n## Stop Rules\n\nx\n';
+  assert.equal(checkboxItems(section(body, 'Outcome')).unchecked.length, 2);
+});
+
+for (const [label, raw] of [
+  ['an inline # comment', 'turns_used: 2   # bumped by the verifier'],
+  ['a quoted value', 'turns_used: "2"'],
+  ['extra whitespace', 'turns_used:    2   '],
+]) {
+  test(`turns_used with ${label} still increments (stop rule stays live)`, () => {
+    const md = `---\nstatus: ACTIVE\n${raw}\nturn_budget: 8\n---\n\n## Outcome\n\n- [ ] x\n\n## Verification evidence\n\nout\n`;
+    const r = decide(md);
+    assert.equal(r.action, 'block');
+    assert.match(r.write, /^turns_used: 3$/m, 'a no-op bump would loop forever and never hit FAILED');
+  });
+}
+
+test('turns_used missing entirely is inserted rather than silently dropped', () => {
+  const md = '---\nstatus: ACTIVE\nturn_budget: 8\n---\n\n## Outcome\n\n- [ ] x\n\n## Verification evidence\n\nout\n';
+  const r = decide(md);
+  assert.equal(r.action, 'block');
+  assert.match(r.write, /^turns_used: 1$/m);
+});
+
+test('headerValue tolerates comments and quotes', () => {
+  const h = 'status: ACTIVE  # running\nturn_budget: "12"\n';
+  assert.equal(headerValue(h, 'status'), 'ACTIVE');
+  assert.equal(headerValue(h, 'turn_budget'), '12');
+});
+
+test('setHeaderField rewrites a commented value and touches only the header', () => {
+  const md = '---\nstatus: ACTIVE   # was pending\n---\n\nstatus: ACTIVE stays in the body\n';
+  const out = setHeaderField(md, 'status', 'DONE');
+  assert.match(out, /^status: DONE$/m);
+  assert.match(out, /status: ACTIVE stays in the body/);
+});
+
+test('sessionIdOf rejects ids that could escape the brief directory', () => {
+  assert.equal(sessionIdOf({ sessionId: '../../etc/passwd' }), null);
+  assert.equal(sessionIdOf({ sessionId: 'a/b' }), null);
+  assert.equal(sessionIdOf({ sessionId: '..' }), null);
+  assert.equal(sessionIdOf({ sessionId: 'ok-123_ABC.def' }), 'ok-123_ABC.def');
 });

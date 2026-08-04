@@ -1,5 +1,10 @@
 # Mermaid Reference
 
+> `"$JW"` is the resolved `jira-writer` launcher. Claude Code puts it on `PATH`;
+> Copilot CLI does not, so resolve it first — see "How to invoke" in `SKILL.md`:
+> `JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)`
+
+
 For generating and embedding Mermaid diagrams. Requires `mmdc`
 (`npm install -g @mermaid-js/mermaid-cli`). Diagram processing steps live in
 `reference/workflow.md` (Step 4).
@@ -54,11 +59,11 @@ If exit code non-zero, report the error and skip the diagram.
 
 ```bash
 # Single diagram: convert to PNG and upload
-jira-writer mermaid <issue_key> <mermaid_file_or_code> [filename]
+"$JW" mermaid <issue_key> <mermaid_file_or_code> [filename]
 # A file path must contain no whitespace — args with spaces/newlines are
 # always treated as mermaid code.
 # Returns: { "attachment_id": "...", "content_url": "...", "filename": "..." }
 
 # Multiple diagrams in one call
-jira-writer mermaid-batch <issue_key> '<json_array_of_diagrams>'
+"$JW" mermaid-batch <issue_key> '<json_array_of_diagrams>'
 ```

@@ -8,8 +8,11 @@
 # tool shell — it is exported only to hook/MCP subprocesses — so SKILL.md must
 # not build script paths from it.
 #
-# Second cause (1.10.0, Copilot CLI support): the fix at the time was to invoke
-# by BARE NAME, relying on Claude Code auto-adding each plugin's bin/ to PATH.
+# Second cause (1.10.0, Copilot CLI support): the fix at the time (v1.5.2, commit
+# 5a96c13; v1.6.0 only restated it) was to invoke by BARE NAME, relying on Claude
+# Code auto-adding each plugin's bin/ to PATH. Note the ORIGINAL contract was
+# "never build a path from $CLAUDE_PLUGIN_ROOT" — bare names were the mechanism,
+# not the requirement — which is why "$JW" still satisfies it.
 # Copilot CLI does neither — no bin/ on PATH, and no plugin-root variable in the
 # shell at all — so bare-name invocation is unresolvable there. SKILL.md must now
 # resolve the launcher into $JW (PATH first, then the Copilot and Claude install
@@ -125,12 +128,28 @@ if [[ -f "$SKILL_MD" ]]; then
     # so bare-name examples are `command not found` there 100% of the time. The
     # portable contract is now "resolve into $JW first, then call \"$JW\" <op>", which
     # works in both harnesses. Bare-name examples are therefore a REGRESSION.
-    if grep -qE '^jira-writer (create_issue|get_issue|search_jql|update_issue|add_comment)' "$SKILL_MD"; then
-        n=$(grep -cE '^jira-writer (create_issue|get_issue|search_jql|update_issue|add_comment)' "$SKILL_MD")
-        fail "SKILL.md has no bare-name jira-writer commands" \
-            "$n bare-name example(s) — unresolvable under Copilot CLI; use \"\$JW\" <op>"
+    # Deliberately NOT anchored to line-start: indented lines, `$ ` prompts and
+    # inline-backtick mentions are bare-name invocations too. Matching an operation
+    # (snake_case, or a known bare op) rather than any word keeps prose such as
+    # "the jira-writer plugin" from being a false positive.
+    BARE_RE="(^|[^A-Za-z0-9/_.\"'-])jira-writer[[:space:]]+([a-z]+_[a-z_]+|doctor|mermaid|mermaid-batch|connection-test)"
+    # reference/*.md counts: SKILL.md routes the model into those files, so a
+    # bare-name command there fails under Copilot exactly the same way.
+    REF_DIR="$(dirname "$SKILL_MD")/reference"
+    bare_hits=0
+    for doc in "$SKILL_MD" "$REF_DIR"/*.md; do
+        [[ -f "$doc" ]] || continue
+        n=$(grep -cE "$BARE_RE" "$doc" 2>/dev/null || true)
+        if [[ "${n:-0}" -gt 0 ]]; then
+            bare_hits=$((bare_hits + n))
+            echo "      bare-name in $(basename "$doc"): $n"
+        fi
+    done
+    if [[ "$bare_hits" -eq 0 ]]; then
+        pass "no bare-name jira-writer commands in SKILL.md or reference/"
     else
-        pass "SKILL.md has no bare-name jira-writer commands"
+        fail "no bare-name jira-writer commands in SKILL.md or reference/" \
+            "$bare_hits example(s) — unresolvable under Copilot CLI; use \"\$JW\" <op>"
     fi
 
     if grep -qE '"\$JW" (create_issue|get_issue|search_jql|update_issue|add_comment)' "$SKILL_MD"; then

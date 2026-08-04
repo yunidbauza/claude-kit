@@ -251,9 +251,20 @@ because Copilot has no LLM-prompt hook type (only `command`, `http`, and `prompt
 | Verification | **Semantic**: judges whether the evidence actually supports each Outcome item | **Mechanical**: every Outcome item ticked `- [x]`, and `## Verification evidence` non-empty |
 | Registers when | this skill is invoked | the plugin is installed (fails open otherwise) |
 
-Both emit the same shape — `{"decision":"block"|"allow","reason":...}` — both write
-`FAILED` at `turn_budget`, and both fail open on any error. Copilot's own
+The two speak different protocols and are not interchangeable: the Claude `agent`
+hook returns `ok: true|false`, while Copilot's `agentStop` expects
+`{"decision":"allow"|"block","reason":...}`. What they share is the contract —
+both write `FAILED` at `turn_budget`, and both fail open on any error. Copilot's own
 8-consecutive-block cap coincides with `turn_budget: 8`.
+
+They never double-register: Claude Code auto-loads a plugin's `hooks/hooks.json`
+(subdirectory), whereas this plugin ships `hooks.json` at its root, which only Copilot
+discovers. `plugins/workstream/.claude-plugin/plugin.json` deliberately declares no
+`hooks` key for the same reason.
+
+"Cannot verify" is not "verified". If the brief has no `## Outcome` checkboxes at all,
+the mechanical verifier releases the turn but does **not** stamp `DONE` — a false
+success would be worse than no verification.
 
 The practical difference: under Copilot, **ticking a box is what marks an item done**,
 so do not tick one until its evidence is actually in the brief. The mechanical

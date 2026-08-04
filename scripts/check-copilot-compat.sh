@@ -172,13 +172,21 @@ for dir in plugins/*/; do
       [ -f "$launcher" ] || continue
       lname=$(basename "$launcher")
       offenders=""
-      for skill in "$dir"/skills/*/SKILL.md; do
-        [ -f "$skill" ] || continue
-        # A command line starting with the bare launcher name inside a fenced block.
-        if grep -qE "^${lname}[[:space:]]" "$skill"; then
-          offenders="$offenders $(basename "$(dirname "$skill")")"
+      # EVERY markdown file under skills/, not just SKILL.md — the reference/ docs are
+      # progressive disclosure that SKILL.md routes the model into, so a bare-name
+      # command there breaks under Copilot exactly the same way.
+      #
+      # Match the launcher name followed by something that looks like an OPERATION
+      # (a snake_case op, or one of the hyphenated/bare ones) rather than any word, so
+      # prose like "the jira-writer plugin" is not a false positive. Leading context
+      # excludes `/` and `-` so paths (.../bin/jira-writer) and `command -v jira-writer`
+      # inside the resolve preamble do not trip it.
+      while IFS= read -r doc; do
+        [ -f "$doc" ] || continue
+        if grep -qE "(^|[^A-Za-z0-9/_.\"'-])${lname}[[:space:]]+([a-z]+_[a-z_]+|doctor|mermaid|mermaid-batch|connection-test)\b" "$doc"; then
+          offenders="$offenders ${doc#"$dir"/skills/}"
         fi
-      done
+      done < <(find "$dir/skills" -name '*.md' 2>/dev/null)
       if [ -z "$offenders" ]; then
         ok "no skill invokes '$lname' by bare name (Copilot has no bin/ on PATH)"
       else
@@ -205,6 +213,17 @@ for dir in plugins/*/; do
       continue
     fi
 
+    # Assert the top-level shape FIRST. Without this, a manifest whose key is
+    # misspelled (e.g. "hook") makes every downstream jq return nothing, the loops
+    # never run, and the file passes vacuously with a green tick.
+    n_events=$(jq -r 'if (.hooks | type) == "object" then (.hooks | length) else -1 end' "$dir/hooks.json" 2>/dev/null)
+    if [ "${n_events:--1}" -gt 0 ] 2>/dev/null; then
+      ok "hooks.json has a non-empty top-level 'hooks' object ($n_events event(s))"
+    else
+      bad "hooks.json has a non-empty top-level 'hooks' object" \
+          "got: $(jq -c 'keys' "$dir/hooks.json" 2>/dev/null) — a misspelled key passes every other check vacuously"
+    fi
+
     while IFS= read -r ev; do
       [ -z "$ev" ] && continue
       if printf '%s' " $VALID_HOOK_EVENTS " | grep -q " $ev "; then
@@ -227,7 +246,9 @@ for dir in plugins/*/; do
     # Referenced scripts must exist and parse.
     while IFS= read -r cmd; do
       [ -z "$cmd" ] && continue
-      rel=$(printf '%s' "$cmd" | grep -oE '\$\{(CLAUDE_PLUGIN_ROOT|COPILOT_PLUGIN_ROOT|PLUGIN_ROOT)\}[^"]*' | head -1 | sed -E 's/^\$\{[A-Z_]+\}\///')
+      # Stop at whitespace or a quote: an unquoted `node ${PLUGIN_ROOT}/x.mjs --flag`
+      # would otherwise capture "--flag" into the path and report a false failure.
+      rel=$(printf '%s' "$cmd" | grep -oE '\$\{(CLAUDE_PLUGIN_ROOT|COPILOT_PLUGIN_ROOT|PLUGIN_ROOT)\}[^"'"'"'[:space:]]*' | head -1 | sed -E 's/^\$\{[A-Z_]+\}\///')
       [ -z "$rel" ] && continue
       if [ -f "$dir/$rel" ]; then
         ok "hook script exists: $rel"

@@ -60,10 +60,21 @@ enforces its goal — see [Harness differences](#harness-differences) below.
 | Verification | **Semantic**: does the recorded evidence actually support each Outcome item? | **Mechanical**: is every Outcome item ticked `- [x]`, and is `## Verification evidence` non-empty? |
 | Registers when | the skill is invoked | the plugin is installed |
 
-Claude Code reads `hooks/hooks.json`, not a root `hooks.json`, so the two never
-double-register. Both write `FAILED` once `turn_budget` is spent, both fail open on
-any error, and Copilot's own 8-consecutive-block cap coincides with the default
+Claude Code auto-loads a plugin's `hooks/hooks.json` (subdirectory) — per its own
+plugin docs, *"the standard hooks/hooks.json is loaded automatically, so
+manifest.hooks should only reference additional hook files"* — while this plugin ships
+`hooks.json` at the **root**, which only Copilot discovers. `plugin.json` declares no
+`hooks` key for the same reason, so the two verifiers never double-register.
+
+Their output shapes differ and are not interchangeable (Claude's agent hook returns
+`ok: true|false`; Copilot's `agentStop` expects `{"decision","reason"}`), but the
+contract is the same: both write `FAILED` once `turn_budget` is spent, both fail open
+on any error, and Copilot's 8-consecutive-block cap coincides with the default
 `turn_budget: 8`.
+
+One deliberate asymmetry: if a brief has no `## Outcome` checkboxes at all, the
+mechanical verifier releases the turn but does **not** write `DONE`. Failing open must
+never mean recording a success it could not verify.
 
 Because Copilot's verifier is mechanical, **ticking a checkbox is what marks an item
 done** — don't tick one before its evidence is in the brief.

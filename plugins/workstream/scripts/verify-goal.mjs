@@ -13,14 +13,19 @@
  * It does NOT judge whether the evidence is convincing. That difference is
  * documented in the workstream README.
  *
- * Both harnesses accept the same Stop/agentStop output shape:
+ * Output shape is Copilot's agentStop contract:
  *   {"decision":"allow"} | {"decision":"block","reason":"..."}
+ * (The Claude-side agent hook uses a different shape, `ok: true|false` — the two are
+ * not interchangeable, which is why each harness gets its own verifier.)
  *
- * FAILING OPEN IS MANDATORY. A broken verifier must never wedge a session, so every
- * unexpected condition returns allow.
+ * TWO FAILURE MODES ARE FORBIDDEN, and they pull in opposite directions:
+ *   1. Wedging a session. Every unexpected condition must return allow.
+ *   2. Recording a FALSE SUCCESS. Failing open must never mean writing `DONE` to a
+ *      brief we could not actually verify — that destroys the audit trail. So
+ *      "cannot verify" releases the turn WITHOUT stamping DONE.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -33,17 +38,17 @@ const TERMINAL = new Set([
   'NEEDS-DECISION',
 ]);
 
-function allow() {
-  process.stdout.write(JSON.stringify({ decision: 'allow' }));
-  process.exit(0);
+/** Headings that legitimately end a section in a goal-on brief. */
+const SIBLING_HEADINGS = ['Task', 'Scope', 'Constraints', 'Outcome', 'Stop Rules', 'Verification evidence'];
+
+function emit(decision, reason) {
+  process.stdout.write(JSON.stringify(reason ? { decision, reason } : { decision }));
+  // Set exitCode and return rather than process.exit(), which can drop buffered
+  // stdout when it is a pipe.
+  process.exitCode = 0;
 }
 
-function block(reason) {
-  process.stdout.write(JSON.stringify({ decision: 'block', reason }));
-  process.exit(0);
-}
-
-/** Read the hook payload from stdin, falling back to argv. Never throws. */
+/** Read the hook payload from stdin (or an explicit string, for tests). Never throws. */
 export function readPayload(raw) {
   try {
     const text = raw ?? readFileSync(0, 'utf8');
@@ -56,7 +61,10 @@ export function readPayload(raw) {
 
 /** Both naming conventions are valid; Copilot emits either. */
 export function sessionIdOf(payload) {
-  return payload?.sessionId || payload?.session_id || null;
+  const id = payload?.sessionId || payload?.session_id || null;
+  // The id becomes a filename. Reject anything that could escape the brief dir.
+  if (typeof id !== 'string' || !/^[A-Za-z0-9._-]+$/.test(id) || id === '.' || id === '..') return null;
+  return id;
 }
 
 /** Split a brief into { header, body }. Returns null if there is no frontmatter. */
@@ -67,24 +75,65 @@ export function splitFrontmatter(md) {
 }
 
 export function headerValue(header, key) {
-  const m = new RegExp(`^${key}:\\s*(.+?)\\s*$`, 'm').exec(header);
-  return m ? m[1].trim() : null;
+  const m = new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(header);
+  if (!m) return null;
+  // Tolerate trailing `# comments` and quoted values — the brief template in
+  // goal-on/SKILL.md demonstrates inline comments on header keys.
+  return m[1].replace(/\s+#.*$/, '').trim().replace(/^["']|["']$/g, '');
 }
 
 /**
- * Extract a `## Section` body, up to the next `## ` heading or EOF.
- * NB: JavaScript has no `\Z`; end-of-string is `$(?![\s\S])` under the `m` flag.
+ * Blank out `#` characters that sit inside fenced code blocks, preserving offsets.
+ * Without this, a line like `## not a heading` inside a fence inside `## Outcome`
+ * truncates the section and hides the unchecked items below it.
  */
-export function section(body, title) {
-  const re = new RegExp(`^##\\s+${title}\\s*$([\\s\\S]*?)(?=^##\\s|$(?![\\s\\S]))`, 'mi');
-  const m = re.exec(body);
-  return m ? m[1] : '';
+function maskFences(text) {
+  const out = text.split('');
+  let inFence = false;
+  const lines = [];
+  let idx = 0;
+  for (const line of text.split('\n')) {
+    lines.push({ start: idx, line });
+    idx += line.length + 1;
+  }
+  for (const { start, line } of lines) {
+    if (/^[ \t]*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      for (let i = 0; i < line.length; i++) {
+        if (out[start + i] === '#') out[start + i] = ' ';
+      }
+    }
+  }
+  return out.join('');
 }
 
-export function uncheckedItems(outcome) {
-  return (outcome.match(/^[ \t]*[-*]\s*\[ \]\s*(.+)$/gm) || []).map((l) =>
-    l.replace(/^[ \t]*[-*]\s*\[ \]\s*/, '').trim(),
+/**
+ * Extract a `## Section` body, up to the next sibling `## ` heading or EOF.
+ * NB: JavaScript has no `\Z`; end-of-string is `$(?![\s\S])` under the `m` flag.
+ * Boundaries are found on a fence-masked copy, then sliced out of the original, so
+ * fenced content (command output, examples) is returned intact.
+ */
+export function section(body, title) {
+  const masked = maskFences(body);
+  const startRe = new RegExp(`^##[ \\t]+${title}[ \\t]*$`, 'mi');
+  const s = startRe.exec(masked);
+  if (!s) return '';
+  const from = s.index + s[0].length;
+  const endRe = new RegExp(`^##[ \\t]+(?:${SIBLING_HEADINGS.join('|')})\\b`, 'gmi');
+  endRe.lastIndex = from;
+  const e = endRe.exec(masked);
+  return body.slice(from, e ? e.index : body.length);
+}
+
+export function checkboxItems(outcome) {
+  const all = outcome.match(/^[ \t]*[-*][ \t]*\[[ xX]\][ \t]*(.*)$/gm) || [];
+  const unchecked = (outcome.match(/^[ \t]*[-*][ \t]*\[ \][ \t]*(.*)$/gm) || []).map((l) =>
+    l.replace(/^[ \t]*[-*][ \t]*\[ \][ \t]*/, '').trim(),
   );
+  return { total: all.length, unchecked };
 }
 
 /** Evidence is "present" only if it has real content beyond the placeholder. */
@@ -96,16 +145,28 @@ export function hasEvidence(evidence) {
   return stripped.length > 0;
 }
 
-export function setHeaderStatus(md, status) {
-  return md.replace(/^(---\r?\n[\s\S]*?)^status:\s*.+?$/m, `$1status: ${status}`);
+/**
+ * Set a key in the frontmatter header only, rewriting whatever value is there.
+ * Deliberately lenient about the OLD value (comments, quotes, junk) — a strict
+ * pattern here silently no-ops, which would stop turns_used advancing and mean the
+ * turn_budget stop rule never fires.
+ */
+export function setHeaderField(md, key, value) {
+  const m = /^(---\r?\n)([\s\S]*?)(\r?\n---)/.exec(md);
+  if (!m) return md;
+  const [, open, header, close] = m;
+  const line = new RegExp(`^${key}:[^\\r\\n]*$`, 'm');
+  const next = line.test(header)
+    ? header.replace(line, `${key}: ${value}`)
+    : `${header}\n${key}: ${value}`;
+  return open + next + close + md.slice(m.index + m[0].length);
 }
 
-export function bumpTurns(md, next) {
-  return md.replace(/^(---\r?\n[\s\S]*?)^turns_used:\s*\d+\s*$/m, `$1turns_used: ${next}`);
-}
+export const setHeaderStatus = (md, status) => setHeaderField(md, 'status', status);
+export const bumpTurns = (md, next) => setHeaderField(md, 'turns_used', next);
 
 /**
- * Core decision. Pure apart from the file write, so tests can drive it directly.
+ * Core decision. Pure apart from the caller's file write, so tests drive it directly.
  * Returns {action: 'allow'|'block', reason?, write?}
  */
 export function decide(md) {
@@ -126,19 +187,24 @@ export function decide(md) {
 
   const outcome = section(body, 'Outcome');
   const evidence = section(body, 'Verification evidence');
-  const unmet = uncheckedItems(outcome);
+  const { total, unchecked } = checkboxItems(outcome);
   const evidenceOk = hasEvidence(evidence);
 
-  if (unmet.length === 0 && evidenceOk) {
+  // No Outcome section, or one with no checkbox items at all: there is nothing
+  // mechanical to verify. Release the turn, but do NOT stamp DONE — claiming success
+  // on an unverifiable brief is worse than not verifying at all.
+  if (total === 0) return { action: 'allow' };
+
+  if (unchecked.length === 0 && evidenceOk) {
     return { action: 'allow', write: setHeaderStatus(md, 'DONE') };
   }
 
   const reasons = [];
-  if (unmet.length) {
+  if (unchecked.length) {
     reasons.push(
-      `${unmet.length} Outcome item(s) still unchecked: ` +
-        unmet.slice(0, 3).map((s) => `"${s.slice(0, 80)}"`).join('; ') +
-        (unmet.length > 3 ? ` (+${unmet.length - 3} more)` : ''),
+      `${unchecked.length} Outcome item(s) still unchecked: ` +
+        unchecked.slice(0, 3).map((s) => `"${s.slice(0, 80)}"`).join('; ') +
+        (unchecked.length > 3 ? ` (+${unchecked.length - 3} more)` : ''),
     );
   }
   if (!evidenceOk) {
@@ -149,33 +215,47 @@ export function decide(md) {
   return { action: 'block', reason: reasons.join('. '), write: bumpTurns(md, turnsUsed + 1) };
 }
 
+/** Write via temp + rename so a crash mid-write cannot truncate the user's brief. */
+function writeAtomic(path, contents) {
+  const tmp = `${path}.tmp-${process.pid}`;
+  try {
+    writeFileSync(tmp, contents, 'utf8');
+    renameSync(tmp, path);
+  } catch {
+    /* a read-only or unwritable brief must not wedge the turn */
+  }
+}
+
 function main() {
-  let briefPath;
   try {
     const sessionId = sessionIdOf(readPayload());
-    if (!sessionId) allow();
+    if (!sessionId) return emit('allow');
 
-    briefPath = join(homedir(), '.claude', 'workstream', 'goal-on', `${sessionId}.md`);
-    if (!existsSync(briefPath)) allow(); // not a goal-on session
+    const briefPath = join(homedir(), '.claude', 'workstream', 'goal-on', `${sessionId}.md`);
+    if (!existsSync(briefPath)) return emit('allow'); // not a goal-on session
 
     const md = readFileSync(briefPath, 'utf8');
     const result = decide(md);
 
-    if (result.write) {
-      try {
-        writeFileSync(briefPath, result.write, 'utf8');
-      } catch {
-        /* a read-only brief must not wedge the turn */
-      }
-    }
-    if (result.action === 'block') block(result.reason);
-    allow();
+    if (result.write) writeAtomic(briefPath, result.write);
+    if (result.action === 'block') return emit('block', result.reason);
+    return emit('allow');
   } catch {
-    allow(); // fail open, always
+    return emit('allow'); // fail open, always
   }
 }
 
 // Only run when invoked directly, so the test file can import the helpers.
 // NB: an `endsWith('verify-goal.mjs')` check is WRONG — 'test-verify-goal.mjs' also
 // ends with it, so importing from the test would run main() and block on stdin.
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+// argv[1] is realpath'd because Node realpaths import.meta.url but not argv[1]; without
+// it, invoking through a symlink silently disables the hook.
+if (process.argv[1]) {
+  let entry = process.argv[1];
+  try {
+    entry = realpathSync(entry);
+  } catch {
+    /* keep the raw path */
+  }
+  if (import.meta.url === pathToFileURL(entry).href) main();
+}
