@@ -64,12 +64,30 @@ REPORT at end: "Embedded 2 of 3 diagrams successfully.
 
 ## `jira-writer: command not found` / "scripts missing" / raw "No such file or directory"
 
-The plugin updated during this session, so the cached `PATH` entry points at a
-directory that no longer exists. **Restart Claude Code** to refresh it. One-off
-fallback within the session: the scripts live under this skill's base directory —
-run `"<skill base dir>/scripts/jira-api-wrapper.sh" <op>`. Do **not** prefix with
-`$CLAUDE_PLUGIN_ROOT`: it is exported only to hook/MCP subprocesses, never to the
-Bash tool shell, so it expands to empty and fails.
+Cause depends on the harness.
+
+**Copilot CLI — expected, not a fault.** Copilot does not add a plugin's `bin/` to
+the shell `PATH`, and exports no plugin-root variable of any kind. Bare
+`jira-writer …` can never work there. Resolve the launcher first (see "How to
+invoke" in `SKILL.md`):
+
+```bash
+JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; \
+                                 ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)
+"$JW" get_issue PROJ-123
+```
+
+**Claude Code — the plugin updated mid-session**, so the cached `PATH` entry points at
+a directory that no longer exists. **Restart Claude Code** to refresh it. The resolve
+line above also recovers within the session, because `ls -td` sorts newest-first and
+skips the dead cache entry.
+
+If `$JW` resolves empty, the plugin is not installed for the current harness — run
+`copilot plugin install jira-writer@claude-kit` or `/plugin install jira-writer`.
+
+Do **not** prefix with `$CLAUDE_PLUGIN_ROOT` in either harness: it is exported only to
+hook/MCP subprocesses, never to the Bash tool shell, so it expands to empty and fails —
+and under Copilot it does not exist at all.
 
 ## Known Issues & Gotchas
 

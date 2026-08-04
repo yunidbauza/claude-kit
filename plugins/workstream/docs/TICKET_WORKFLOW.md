@@ -59,3 +59,13 @@ Standalone entry points:
 | `ship-config.json` | ship | Per-repo auto-merge default: `{"<owner>/<repo>": {"auto_merge": true}}` — when active, CI green + all findings resolved replaces the human-approval wait. |
 | `pr-ledgers/<owner>-<repo>-pr<N>.md` | review-pr-findings | Finding triage ledger per PR; survives sessions/compaction; deleted after merge. |
 | `goal-on/<session-id>.md` | goal-on | Active goal brief; the verifier Stop hook reads it at every turn-end. Session-id keyed so concurrent sessions cannot collide. |
+
+The path is identical under Claude Code and Copilot CLI — it is per-user state rather
+than harness configuration, so a ticket can move between the two CLIs untouched.
+
+The verifier behind `goal-on/<session-id>.md` differs by harness: Claude Code runs an
+`agent`-type Stop hook that judges the evidence semantically, while Copilot CLI —
+which has no LLM-prompt hook type — runs `scripts/verify-goal.mjs` via a `command`
+hook, checking mechanically that every Outcome item is ticked and that evidence was
+recorded. Both fail open and both write `FAILED` at `turn_budget`. See
+[../README.md#harness-differences](../README.md#harness-differences).

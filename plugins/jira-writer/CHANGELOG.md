@@ -1,5 +1,45 @@
 # Changelog — jira-writer
 
+## 1.10.0 — 2026-08-04
+
+### Added
+- **GitHub Copilot CLI support.** The plugin now installs and runs in Copilot CLI as
+  well as Claude Code, from a single source — no separate build. Copilot already
+  accepts `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` as
+  manifest locations, so the structural side needed no change; what did need fixing
+  was how the skill calls its own launcher.
+- README: Copilot install instructions (`copilot plugin install jira-writer@claude-kit`),
+  an "Invoking the launcher" section explaining the per-harness difference, and an
+  explicit platform-support statement (macOS/Linux fully supported; Windows via WSL or
+  Git Bash, since the scripts are bash).
+
+### Fixed
+- **Bare-name invocation is no longer assumed.** Every command in `SKILL.md` used
+  `jira-writer <op>`, which relies on Claude Code auto-adding the plugin's `bin/` to
+  the Bash tool's `PATH`. **Copilot CLI does neither** — no `bin/` on `PATH`, and no
+  plugin-root variable exported to the shell at all — so every call failed with
+  `command not found`. The skill now resolves the launcher into `$JW` first and calls
+  `"$JW" <op>`:
+
+  ```bash
+  JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; \
+                                   ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)
+  ```
+
+  Two subtleties are load-bearing and are documented in `SKILL.md` so they survive
+  future edits: the `ls` calls must be **sequential** (a single `ls` with both globs
+  sorts all matches together, and `.claude` sorts before `.copilot`, so Copilot would
+  resolve to a Claude cache copy), and `-t` sorts **newest-first** so a stale cached
+  version never wins — with a plain `-d`, `1.8.0` sorts ahead of `1.9.0`.
+- **Removed the "never use an absolute path" instruction**, which was correct for
+  Claude Code but actively wrong under Copilot, where an absolute path is the only
+  thing that works. The `$CLAUDE_PLUGIN_ROOT` prohibition remains — that variable is
+  exported only to hook/MCP subprocesses in Claude Code and does not exist at all in
+  Copilot.
+- `reference/troubleshooting.md`: the `command not found` entry now splits by harness
+  — expected-and-normal under Copilot, versus a stale mid-session cache under Claude
+  Code — and gives the resolve line as the recovery for both.
+
 ## 1.9.0 — 2026-07-27
 
 ### Added

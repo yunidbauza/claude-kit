@@ -2,16 +2,23 @@
 #
 # test-bin-launcher.sh
 #
-# Regression test for the root cause behind the recurring
-# "$CLAUDE_PLUGIN_ROOT isn't exported into the Bash shell" message:
-# $CLAUDE_PLUGIN_ROOT is NEVER present in the Bash tool shell (it is exported
-# only to hook/MCP subprocesses), so SKILL.md must invoke the plugin's scripts
-# by BARE NAME via the plugin's bin/ directory (which Claude Code auto-adds to
-# PATH), not via "$CLAUDE_PLUGIN_ROOT/...".
+# Regression test for how SKILL.md invokes the launcher.
+#
+# Original cause (pre-1.6.0): $CLAUDE_PLUGIN_ROOT is NEVER present in the Bash
+# tool shell — it is exported only to hook/MCP subprocesses — so SKILL.md must
+# not build script paths from it.
+#
+# Second cause (1.10.0, Copilot CLI support): the fix at the time was to invoke
+# by BARE NAME, relying on Claude Code auto-adding each plugin's bin/ to PATH.
+# Copilot CLI does neither — no bin/ on PATH, and no plugin-root variable in the
+# shell at all — so bare-name invocation is unresolvable there. SKILL.md must now
+# resolve the launcher into $JW (PATH first, then the Copilot and Claude install
+# roots, newest-first) and call "$JW" <op>, which works in both harnesses.
 #
 # This test proves the bin/jira-writer dispatcher works with CLAUDE_PLUGIN_ROOT
-# unset, from an unrelated working directory, and that SKILL.md no longer tells
-# the model to use the unset variable.
+# unset from an unrelated working directory, and that SKILL.md instructs the
+# portable form: no $CLAUDE_PLUGIN_ROOT paths, no bare-name commands, a documented
+# resolve preamble, and "$JW" call sites.
 #
 set -uo pipefail
 
@@ -112,10 +119,46 @@ if [[ -f "$SKILL_MD" ]]; then
     else
         pass "SKILL.md has no \$CLAUDE_PLUGIN_ROOT script paths"
     fi
-    if grep -qE '(^|[^a-zA-Z-])jira-writer (create_issue|get_issue|search_jql|update_issue|add_comment)' "$SKILL_MD"; then
-        pass "SKILL.md uses bare-name jira-writer invocation"
+    # Until 1.10.0 this asserted the opposite — that SKILL.md invoked the launcher by
+    # BARE NAME — because Claude Code puts each plugin's bin/ on the Bash tool PATH.
+    # Copilot CLI does not: no bin/ on PATH, and no plugin-root variable in the shell,
+    # so bare-name examples are `command not found` there 100% of the time. The
+    # portable contract is now "resolve into $JW first, then call \"$JW\" <op>", which
+    # works in both harnesses. Bare-name examples are therefore a REGRESSION.
+    if grep -qE '^jira-writer (create_issue|get_issue|search_jql|update_issue|add_comment)' "$SKILL_MD"; then
+        n=$(grep -cE '^jira-writer (create_issue|get_issue|search_jql|update_issue|add_comment)' "$SKILL_MD")
+        fail "SKILL.md has no bare-name jira-writer commands" \
+            "$n bare-name example(s) — unresolvable under Copilot CLI; use \"\$JW\" <op>"
     else
-        fail "SKILL.md uses bare-name jira-writer invocation" "no bare-name examples found"
+        pass "SKILL.md has no bare-name jira-writer commands"
+    fi
+
+    if grep -qE '"\$JW" (create_issue|get_issue|search_jql|update_issue|add_comment)' "$SKILL_MD"; then
+        pass "SKILL.md invokes the launcher through the resolved \$JW"
+    else
+        fail "SKILL.md invokes the launcher through the resolved \$JW" \
+            "no \"\$JW\" <op> examples found"
+    fi
+
+    # The resolve preamble itself must stay documented, or the model has no way to
+    # populate $JW under Copilot.
+    if grep -q 'copilot/installed-plugins' "$SKILL_MD" && grep -q 'command -v jira-writer' "$SKILL_MD"; then
+        pass "SKILL.md documents the cross-harness resolve preamble"
+    else
+        fail "SKILL.md documents the cross-harness resolve preamble" \
+            "expected both 'command -v jira-writer' and a ~/.copilot/installed-plugins fallback"
+    fi
+
+    # Sequential `ls` calls, not one `ls` with two globs: a single ls sorts all
+    # matches together and '.claude' sorts before '.copilot', so Copilot would
+    # resolve to a Claude cache copy. And -t keeps newest-first so a stale version
+    # never wins. Both are easy to "simplify" away in a later edit.
+    if grep -q 'ls -td ~/.copilot/installed-plugins' "$SKILL_MD" &&
+       grep -q 'ls -td ~/.claude/plugins/cache' "$SKILL_MD"; then
+        pass "resolve preamble uses separate, newest-first (ls -td) lookups"
+    else
+        fail "resolve preamble uses separate, newest-first (ls -td) lookups" \
+            "expected two distinct 'ls -td' calls; a single ls with both globs picks the wrong harness"
     fi
 else
     fail "SKILL.md present" "missing: $SKILL_MD"
