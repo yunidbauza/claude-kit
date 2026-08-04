@@ -36,67 +36,92 @@ require REST** (MCP can't render them). Everything else tries REST first, then M
 
 ## How to invoke
 
-Call the plugin by its **bare command name** — the `bin/jira-writer` launcher is on
-the Bash tool's `PATH`, so it resolves from any directory:
+**Resolve the launcher first, then call it through `$JW`.** This one line works in
+every harness — Claude Code, Copilot CLI, and a plain shell:
 
 ```bash
-jira-writer get_issue PROJ-123
+JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; \
+                                 ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)
+"$JW" get_issue PROJ-123
 ```
 
-**Do NOT** prefix with `$CLAUDE_PLUGIN_ROOT` or an absolute path — that variable is
-exported only to hook/MCP subprocesses, expands to empty in the Bash tool shell, and
-fails every time. If you hit `command not found` / "scripts missing", the plugin
-updated mid-session — **restart Claude Code** (see `reference/troubleshooting.md`).
+Why the resolve step: Claude Code auto-adds each plugin's `bin/` to the Bash tool's
+`PATH`, so `command -v` succeeds there. **Copilot CLI does neither — it adds no
+plugin `bin/` to `PATH` and exports no plugin-root variable at all** — so the glob
+fallback is what finds the launcher.
+
+Three details in that line are load-bearing, so do not "simplify" it:
+
+- The two `ls` calls are **sequential inside `{ … }`**, not one `ls` with two globs.
+  A single `ls` sorts all matches together, and `.claude` sorts before `.copilot` —
+  which would make Copilot resolve to a Claude cache copy.
+- `ls -td` sorts **newest first**, so a stale cached version never wins. With a plain
+  `-d`, `1.8.0` sorts before `1.9.0` and you get the older build.
+- Order matters: Copilot's path is probed first, Claude's second.
+
+**Tool shells do not persist environment between calls.** `JW=` must therefore be set
+in the *same* Bash call that uses it. Include the resolve line in every call that
+invokes the plugin; the cheat-sheet below writes `$JW` as shorthand for the resolved
+launcher.
+
+Never hard-code an absolute path and never use `$CLAUDE_PLUGIN_ROOT` — it is exported
+only to hook/MCP subprocesses, expands to empty in the Bash tool shell, and does not
+exist in Copilot. If `$JW` comes back empty the plugin is not installed, or it updated
+mid-session and the cache path moved — reinstall or restart the CLI (see
+`reference/troubleshooting.md`).
+
+> Optional convenience: `ln -s "$JW" /usr/local/bin/jira-writer` once puts the
+> launcher on your real `PATH`, after which bare `jira-writer …` works everywhere.
 
 ## Command cheat-sheet
 
 ```bash
 # Read / search
-jira-writer get_issue PROJ-123 [FIELDS] [--summary-only]
-jira-writer search_jql "project = PROJ AND status = Open"
-jira-writer get_projects
-jira-writer get_issue_types PROJECT_KEY
-jira-writer get_transitions PROJ-123
-jira-writer get_remote_links PROJ-123   # remote/web links attached to an issue
-jira-writer lookup_user "alice@example.com"
+"$JW" get_issue PROJ-123 [FIELDS] [--summary-only]
+"$JW" search_jql "project = PROJ AND status = Open"
+"$JW" get_projects
+"$JW" get_issue_types PROJECT_KEY
+"$JW" get_transitions PROJ-123
+"$JW" get_remote_links PROJ-123   # remote/web links attached to an issue
+"$JW" lookup_user "alice@example.com"
 
 # Create (‑‑desc-file/‑‑markdown convert markdown → validated ADF automatically)
-jira-writer create_issue PROJECT_KEY TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]
-jira-writer create_issue INCORP Story "OAuth support" --desc-file /tmp/spec.md --parent INCORP-172
+"$JW" create_issue PROJECT_KEY TYPE SUMMARY [DESC] [--desc-file PATH] [--markdown] [--parent KEY]
+"$JW" create_issue INCORP Story "OAuth support" --desc-file /tmp/spec.md --parent INCORP-172
 
 # Update (pass only field values; wrapper wraps with {"fields": ...})
-jira-writer update_issue PROJ-123 '{"summary":"New title"}'
-jira-writer update_issue PROJ-123 FIELDS_JSON --desc-file PATH --markdown
+"$JW" update_issue PROJ-123 '{"summary":"New title"}'
+"$JW" update_issue PROJ-123 FIELDS_JSON --desc-file PATH --markdown
 # FIELDS_JSON + --desc-file merge in ONE call: rename + rewrite body together
-jira-writer update_issue PROJ-123 '{"summary":"New title"}' --desc-file /tmp/body.md
+"$JW" update_issue PROJ-123 '{"summary":"New title"}' --desc-file /tmp/body.md
 # ⚠ --desc-file/--markdown REPLACE the whole description. To ADD to an existing
 # rich description (tables/checkboxes/images survive untouched), use --append:
 # it fetches the current ADF and concatenates the new content onto it.
-jira-writer update_issue PROJ-123 '{}' --desc-file /tmp/extra.md --append
+"$JW" update_issue PROJ-123 '{}' --desc-file /tmp/extra.md --append
 
 # Comment (‑‑markdown / ‑‑desc-file for rich ADF comments)
-jira-writer add_comment PROJ-123 "Quick note."
-jira-writer add_comment PROJ-123 "## Update
+"$JW" add_comment PROJ-123 "Quick note."
+"$JW" add_comment PROJ-123 "## Update
 
 - [x] Done" --markdown
 
 # Link issues — DIRECTION: reads as a sentence, the FIRST key performs the verb.
 # "PROJ-1 Blocks PROJ-2" ⇒ PROJ-1 blocks PROJ-2 (PROJ-2 is blocked by PROJ-1).
-jira-writer link_issues PROJ-1 Blocks PROJ-2
-jira-writer get_link_types              # valid type names + inward/outward wording
+"$JW" link_issues PROJ-1 Blocks PROJ-2
+"$JW" get_link_types              # valid type names + inward/outward wording
 
 # Other
-jira-writer transition_issue PROJ-123 TRANSITION_ID
-jira-writer upload_attachment PROJ-123 /path/to/file.png
-jira-writer add_worklog PROJ-123 "2h"
-jira-writer validate_adf /tmp/my-adf.json   # local ADF check, no Jira call
+"$JW" transition_issue PROJ-123 TRANSITION_ID
+"$JW" upload_attachment PROJ-123 /path/to/file.png
+"$JW" add_worklog PROJ-123 "2h"
+"$JW" validate_adf /tmp/my-adf.json   # local ADF check, no Jira call
 
 # Diagnostics & mermaid
-jira-writer doctor              # dependency status (JSON)
-jira-writer connection-test     # API connectivity + recommendation
-jira-writer test_connection     # REST auth check (returns {rest_api: {...}, recommended: ...})
-jira-writer mermaid <key> <file_or_code> [filename]
-jira-writer mermaid-batch <key> '<json_array_of_diagrams>'
+"$JW" doctor              # dependency status (JSON)
+"$JW" connection-test     # API connectivity + recommendation
+"$JW" test_connection     # REST auth check (returns {rest_api: {...}, recommended: ...})
+"$JW" mermaid <key> <file_or_code> [filename]
+"$JW" mermaid-batch <key> '<json_array_of_diagrams>'
 ```
 
 **Aliases:** the wrapper accepts verb-only (`issue`, `create`, `comment`, `search`,
@@ -108,8 +133,8 @@ with a "Did you mean: …" suggestion. Default issue type is `Task`.
 For almost everything, write markdown and let the plugin convert:
 
 ```bash
-jira-writer create_issue INCORP Story "OAuth support" --desc-file /tmp/oauth-spec.md --parent INCORP-172
-jira-writer add_comment  INCORP-173 "## Update
+"$JW" create_issue INCORP Story "OAuth support" --desc-file /tmp/oauth-spec.md --parent INCORP-172
+"$JW" add_comment  INCORP-173 "## Update
 
 - [x] Code review complete" --markdown
 ```

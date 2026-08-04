@@ -1292,12 +1292,16 @@ suggest_op() {
 # Only run dispatch when invoked directly (not sourced for testing).
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]; then
     # Plugin-runtime sanity warning.
-    # When invoked from a plugin skill, $CLAUDE_PLUGIN_ROOT should be set
-    # and the script's path should contain /plugins/cache/. If neither is
-    # true, warn (but do not fail) — direct invocations remain valid.
-    if [[ -z "${CLAUDE_PLUGIN_ROOT:-}" ]] && [[ "${BASH_SOURCE[0]}" != *"/plugins/cache/"* ]]; then
-        echo "[WARN] CLAUDE_PLUGIN_ROOT is unset and script is not under /plugins/cache/." >&2
-        echo "[WARN] If you invoked this from a Claude Code skill, the plugin runtime may have changed." >&2
+    # Under Claude Code, a skill invocation has $CLAUDE_PLUGIN_ROOT set or runs from
+    # /plugins/cache/. Under Copilot CLI NEITHER is ever true — it exports no
+    # plugin-root variable to the shell and installs to /installed-plugins/ — so
+    # /installed-plugins/ must be recognised as a legitimate runtime too. Without it
+    # this warned "the plugin runtime may have changed" on 100% of Copilot calls.
+    if [[ -z "${CLAUDE_PLUGIN_ROOT:-}" ]] &&
+       [[ "${BASH_SOURCE[0]}" != *"/plugins/cache/"* ]] &&
+       [[ "${BASH_SOURCE[0]}" != *"/installed-plugins/"* ]]; then
+        echo "[WARN] CLAUDE_PLUGIN_ROOT is unset and script is not under a known plugin root." >&2
+        echo "[WARN] If you invoked this from a plugin skill, the plugin runtime may have changed." >&2
     fi
 
     # Source-only mode: when called with `--source-only`, expose functions but skip dispatch.

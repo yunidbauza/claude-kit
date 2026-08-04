@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "hooks": {
+    "agentStop": [
+      {
+        "type": "command",
+        "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/verify-goal.mjs\"",
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

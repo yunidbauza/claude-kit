@@ -142,6 +142,10 @@ Outcome becomes a numbered multiple-choice question via `AskUserQuestion`. One
 batch, not a drip. This is the last chance — after Phase 1 the hook will refuse to
 let the turn end, so an unasked question becomes a guess that burns the budget.
 
+If `AskUserQuestion` is not available (Copilot CLI has no such tool), ask in plain
+prose instead: a numbered list, each question with its lettered options and a marked
+recommendation, then end the turn and wait. The batching rule matters, not the tool.
+
 **6. Set the route.**
 
 - `artifact` — research, slides, documents, Jira or Confluence updates, throwaway
@@ -233,6 +237,39 @@ merge, and must not duplicate any of ship's steps.
 A `goal/<slug>` branch carries no Jira key by design — `goal-on` is the non-ticket
 entry point. `ship` already parses for a key, finds none, skips the Jira transitions,
 and notes it. That is correct behavior; do not work around it.
+
+## Harness support
+
+The goal is enforced in both Claude Code and Copilot CLI, but by different verifiers,
+because Copilot has no LLM-prompt hook type (only `command`, `http`, and `prompt` on
+`sessionStart`).
+
+| | Claude Code | Copilot CLI |
+|---|---|---|
+| Declared in | `hooks:` in this file's frontmatter | `hooks.json` at the plugin root |
+| Type | `agent` — an LLM reads the brief | `command` — `scripts/verify-goal.mjs` |
+| Verification | **Semantic**: judges whether the evidence actually supports each Outcome item | **Mechanical**: every Outcome item ticked `- [x]`, and `## Verification evidence` non-empty |
+| Registers when | this skill is invoked | the plugin is installed (fails open otherwise) |
+
+The two speak different protocols and are not interchangeable: the Claude `agent`
+hook returns `ok: true|false`, while Copilot's `agentStop` expects
+`{"decision":"allow"|"block","reason":...}`. What they share is the contract —
+both write `FAILED` at `turn_budget`, and both fail open on any error. Copilot's own
+8-consecutive-block cap coincides with `turn_budget: 8`.
+
+They never double-register: Claude Code auto-loads a plugin's `hooks/hooks.json`
+(subdirectory), whereas this plugin ships `hooks.json` at its root, which only Copilot
+discovers. `plugins/workstream/.claude-plugin/plugin.json` deliberately declares no
+`hooks` key for the same reason.
+
+"Cannot verify" is not "verified". If the brief has no `## Outcome` checkboxes at all,
+the mechanical verifier releases the turn but does **not** stamp `DONE` — a false
+success would be worse than no verification.
+
+The practical difference: under Copilot, **ticking a box is what marks an item done**,
+so do not tick one until its evidence is actually in the brief. The mechanical
+verifier cannot tell a real command transcript from a plausible-looking one — that
+honesty is on you.
 
 ## Terminal states
 

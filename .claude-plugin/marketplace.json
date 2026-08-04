@@ -9,13 +9,13 @@
     {
       "name": "jira-writer",
       "description": "Read, search, create, and update Jira Cloud tickets — fetch issue details, search with JQL, list projects, look up users, and write rich content with automatic Mermaid diagram embedding",
-      "version": "1.9.0",
+      "version": "1.10.0",
       "source": "./plugins/jira-writer"
     },
     {
       "name": "workstream",
       "description": "Jira-ticket-to-merge workflow: start a ticket with spec reconciliation and worktrees, drive the PR through review/findings/merge, and propagate spec deviations.",
-      "version": "1.10.0",
+      "version": "1.11.0",
       "source": "./plugins/workstream"
     }
   ]

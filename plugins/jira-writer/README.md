@@ -1,24 +1,65 @@
 # Jira Writer
 
-Claude Code plugin for creating and updating Jira Cloud tickets with rich content, including automatic Mermaid diagram embedding and interactive checkboxes.
+Agent plugin for creating and updating Jira Cloud tickets with rich content, including automatic Mermaid diagram embedding and interactive checkboxes. Works in **Claude Code** and **GitHub Copilot CLI** from one source.
 
 Part of [claude-kit](../../README.md).
 
 ## Installation
+
+**Claude Code**
 
 ```bash
 /plugin marketplace add yunidbauza/claude-kit
 /plugin install jira-writer
 ```
 
+**GitHub Copilot CLI**
+
+```bash
+copilot plugin marketplace add yunidbauza/claude-kit
+copilot plugin install jira-writer@claude-kit
+```
+
+Then `/skills reload`, or start a new session.
+
 ### Manual Installation
 
 ```bash
 git clone https://github.com/yunidbauza/claude-kit.git /tmp/claude-kit
-cp -r /tmp/claude-kit/plugins/jira-writer ~/.claude/plugins/
+cp -r /tmp/claude-kit/plugins/jira-writer ~/.claude/plugins/     # or ~/.copilot/installed-plugins/
 chmod +x ~/.claude/plugins/jira-writer/skills/jira-writer/scripts/*.sh
 rm -rf /tmp/claude-kit
 ```
+
+## Invoking the launcher (differs by harness)
+
+Claude Code adds each plugin's `bin/` to the Bash tool's `PATH`, so bare
+`jira-writer …` resolves. **Copilot CLI does not** — it adds no plugin `bin/` to
+`PATH` and exports no plugin-root variable to the shell at all. The skill therefore
+resolves the launcher itself before every call:
+
+```bash
+JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; \
+                                 ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)
+"$JW" get_issue PROJ-123
+```
+
+The two `ls` calls are sequential (not one `ls` with two globs, which would sort
+`.claude` ahead of `.copilot`) and `-t` sorts newest-first so a stale cached version
+never wins. Tool shells don't persist environment between calls, so `JW=` has to be
+set in the same call that uses it.
+
+Prefer the bare name everywhere? Symlink it once:
+
+```bash
+ln -s "$JW" /usr/local/bin/jira-writer
+```
+
+## Platform support
+
+macOS and Linux are fully supported in both harnesses. The scripts are bash, so on
+Windows use **WSL** (also Copilot's recommended Windows path) or **Git Bash**;
+Copilot's native-PowerShell mode is experimental and is not a supported target here.
 
 ## Prerequisites
 

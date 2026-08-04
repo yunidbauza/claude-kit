@@ -1,5 +1,10 @@
 # ADF Reference
 
+> `"$JW"` is the resolved `jira-writer` launcher. Claude Code puts it on `PATH`;
+> Copilot CLI does not, so resolve it first — see "How to invoke" in `SKILL.md`:
+> `JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)`
+
+
 Atlassian Document Format node catalog. **Prefer the markdown converter**
 (`--desc-file --markdown`) over hand-building these — the converter emits valid
 ADF and `adf-validate.mjs` catches mistakes client-side. Use this catalog only
@@ -117,7 +122,7 @@ any ADF send) catches all of them client-side.
 - **204 = success.** PUTs and some DELETEs return HTTP 204 with an empty body. The
   wrapper emits `{"api":"rest","data":{"success":true}}` on 204.
 - **Pre-flight your ADF.** For an opaque `INVALID_INPUT`, run
-  `jira-writer validate_adf /tmp/your-adf.json` — it reports the first
+  `"$JW" validate_adf /tmp/your-adf.json` — it reports the first
   failing block index and the rule violated, without touching Jira.
 
 ## Rich Comment Example
@@ -126,7 +131,7 @@ any ADF send) catches all of them client-side.
 numeric `version`, array `content`):
 
 ```bash
-jira-writer add_comment PROJ-123 '{
+"$JW" add_comment PROJ-123 '{
   "type": "doc",
   "version": 1,
   "content": [

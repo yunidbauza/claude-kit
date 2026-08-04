@@ -189,7 +189,9 @@ the ledger and PR state make resumption idempotent). On each wake:
 - Delete the ledger `~/.claude/workstream/pr-ledgers/<owner>-<repo>-pr<N>.md`.
 - If this session was inside the worktree merge-pr removed, call
   `ExitWorktree action: keep` to return to the original checkout (a no-op if you
-  never entered a worktree).
+  never entered a worktree). Where that tool does not exist (Copilot CLI), `cd` to
+  the main working tree instead:
+  `cd "$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /,""); print; exit}')"`.
 
 ## Red flags
 

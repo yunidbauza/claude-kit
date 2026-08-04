@@ -1,5 +1,10 @@
 # Examples
 
+> `"$JW"` is the resolved `jira-writer` launcher. Claude Code puts it on `PATH`;
+> Copilot CLI does not, so resolve it first — see "How to invoke" in `SKILL.md`:
+> `JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)`
+
+
 Common usage patterns. Commands use the bare `jira-writer` launcher.
 
 ## 1. Create Ticket with Diagram
@@ -64,24 +69,24 @@ the converter builds the taskList for you.
 > "Create a ticket to refactor the database connection pool"
 
 1. No complex content → REST API with MCP fallback available
-2. `jira-writer create_issue PROJECT "Task" "Refactor database connection pool" "Description..."`
+2. `"$JW" create_issue PROJECT "Task" "Refactor database connection pool" "Description..."`
 3. If REST fails, fall back to `mcp__atlassian__createJiraIssue` (projectKey, issueTypeName "Task", summary, markdown description)
 
 ## 8. Fetch Issue Details
 > "Show me the details of PROJ-123"
 
-1. `jira-writer get_issue PROJ-123`
+1. `"$JW" get_issue PROJ-123`
 2. Present summary, status, assignee, description, etc.
 
 ## 9. Search Issues with JQL
 > "Find all open bugs assigned to me in PROJECT"
 
 1. Build JQL: `project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()`
-2. `jira-writer search_jql "project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()"`
+2. `"$JW" search_jql "project = PROJECT AND issuetype = Bug AND status != Done AND assignee = currentUser()"`
 3. Present results readably
 
 ## 10. List Projects
 > "What Jira projects do I have access to?"
 
-1. `jira-writer get_projects`
+1. `"$JW" get_projects`
 2. Present project list with keys and names

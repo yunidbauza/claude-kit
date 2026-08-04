@@ -1,0 +1,49 @@
+name: copilot compatibility
+
+# Both plugins are published for Claude Code AND GitHub Copilot CLI from one source.
+# Copilot resolves manifests from a fixed set of locations and requires a specific
+# schema, and — unlike Claude Code — adds no plugin `bin/` to PATH. Those constraints
+# are invisible in normal use, so they are asserted here instead of discovered by a
+# user whose install silently half-works.
+
+on:
+  push:
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/marketplace.json'
+      - 'scripts/check-copilot-compat.sh'
+      - '.github/workflows/copilot-compat.yml'
+  pull_request:
+    paths:
+      - 'plugins/**'
+      - '.claude-plugin/marketplace.json'
+      - 'scripts/check-copilot-compat.sh'
+      - '.github/workflows/copilot-compat.yml'
+  workflow_dispatch:
+
+jobs:
+  compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Validate Copilot CLI compatibility
+        run: bash scripts/check-copilot-compat.sh
+
+  verify-goal:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['18', '20']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Test the portable goal-on Stop verifier
+        working-directory: plugins/workstream/scripts
+        run: node --test test-verify-goal.mjs

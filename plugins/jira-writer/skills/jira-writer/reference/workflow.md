@@ -1,5 +1,10 @@
 # Jira Writer — Full Workflow
 
+> `"$JW"` is the resolved `jira-writer` launcher. Claude Code puts it on `PATH`;
+> Copilot CLI does not, so resolve it first — see "How to invoke" in `SKILL.md`:
+> `JW=$(command -v jira-writer || { ls -td ~/.copilot/installed-plugins/*/jira-writer/bin/jira-writer 2>/dev/null; ls -td ~/.claude/plugins/cache/*/jira-writer/*/bin/jira-writer 2>/dev/null; } | head -1)`
+
+
 Step-by-step flow for creating or updating tickets. The lean `SKILL.md` covers the
 common path (`--desc-file --markdown`); read this file when you need the full
 diagram / complex-ADF / update-mode machinery.
@@ -58,7 +63,7 @@ For each mermaid block (see `reference/mermaid.md` for options and diagram types
         SKIP this diagram
 
 4d. UPLOAD attachment (REST API required)
-    Use: jira-writer upload_attachment $ISSUE_KEY $TEMP_DIR/diagram-N.png
+    Use: "$JW" upload_attachment $ISSUE_KEY $TEMP_DIR/diagram-N.png
     Or directly:
     POST to: https://$JIRA_DOMAIN/rest/api/3/issue/$ISSUE_KEY/attachments
     Headers:
@@ -103,7 +108,7 @@ For most rich tickets, **don't hand-build ADF**. Pass markdown via `--desc-file`
 and let the plugin convert + validate:
 
 ```bash
-jira-writer create_issue INCORP Story "OAuth support" \
+"$JW" create_issue INCORP Story "OAuth support" \
   --desc-file /tmp/oauth-spec.md \
   --parent INCORP-172
 ```
@@ -116,7 +121,7 @@ that fired and the path to the offending node.
 For inline markdown:
 
 ```bash
-jira-writer add_comment INCORP-173 "## Update
+"$JW" add_comment INCORP-173 "## Update
 
 - [x] Code review complete" --markdown
 ```
@@ -162,7 +167,7 @@ Choose API based on content complexity (determined in Step 5).
 
 **New issues:**
 ```bash
-jira-writer create_issue PROJECT_KEY "Task" "Summary" "Description"
+"$JW" create_issue PROJECT_KEY "Task" "Summary" "Description"
 # If envelope indicates MCP fallback: mcp__atlassian__createJiraIssue with
 # projectKey, issueTypeName (default "Task"), summary, description (markdown)
 ```
@@ -172,12 +177,12 @@ spike→"Spike", epic→"Epic", subtask→"Subtask".
 
 **Existing issues:**
 ```bash
-jira-writer update_issue PROJ-123 '{"summary": "New title"}'
+"$JW" update_issue PROJ-123 '{"summary": "New title"}'
 # If MCP fallback: mcp__atlassian__editJiraIssue with description (markdown)
 
 # Rename AND rewrite the body in a single call: the FIELDS_JSON is merged with
 # the --desc-file body (file wins on the .description key). No two-call dance.
-jira-writer update_issue PROJ-123 '{"summary": "New title"}' --desc-file /tmp/body.md
+"$JW" update_issue PROJ-123 '{"summary": "New title"}' --desc-file /tmp/body.md
 ```
 
 ### Path B: Complex Content (REST API only)
@@ -187,7 +192,7 @@ Content with checkboxes, images, or mermaid diagrams requires REST API.
 **New issues:**
 ```bash
 # Build the ADF document (Step 5a), then pass as the fourth arg. Auto-detected.
-jira-writer create_issue PROJECT_KEY "Task" "Summary" '<ADF_DOCUMENT_JSON>'
+"$JW" create_issue PROJECT_KEY "Task" "Summary" '<ADF_DOCUMENT_JSON>'
 ```
 
 To attach mermaid images, use the two-step flow: create with summary only, upload
