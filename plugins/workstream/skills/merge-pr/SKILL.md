@@ -42,8 +42,11 @@ Resolve all three before touching anything:
 WT=<absolute path>
 
 # 2. The repository — resolved FROM THE WORKSPACE, never from cwd.
+#    Handles scp-style, https, ssh:// and scheme+port remotes alike, and refuses
+#    to continue on an empty answer (see "Empty is not safe" below).
 REPO=$(git -C "$WT" remote get-url origin \
-        | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')
+        | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/]*@##; s#^[^/:]+(:[0-9]+)?[:/]##; s#/+$##; s#\.git$##')
+[ -n "$REPO" ] || { echo "ABORT: no origin remote resolvable from $WT"; exit 1; }
 
 # 3. The PR number, from the caller's argument.
 PR=<number>
@@ -66,17 +69,43 @@ verified:
 PR_HEAD=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq '.headRefOid')
 LOCAL_HEAD=$(git -C "$WT" rev-parse HEAD)
 
+# Empty is not a match — see below. Check it before the comparison, not after.
+if [ -z "$PR_HEAD" ] || [ -z "$LOCAL_HEAD" ]; then
+  echo "ABORT: could not read both heads (PR_HEAD='$PR_HEAD' LOCAL_HEAD='$LOCAL_HEAD')"
+  exit 1
+fi
+
 if [ "$PR_HEAD" != "$LOCAL_HEAD" ]; then
   echo "ABORT: $REPO#$PR is at $PR_HEAD but $WT is at $LOCAL_HEAD"
   exit 1
 fi
 ```
 
+#### Empty is not safe
+
+The emptiness check above is not defensive padding; without it the guard fails
+**open** on the one input most likely to be wrong.
+
+Neither tool errors on an empty argument — both silently fall back to the current
+directory, which is the exact thing this whole step exists to distrust:
+
+```text
+git -C "" rev-parse HEAD          -> prints cwd's HEAD, exit 0
+gh pr view <N> --repo "" --json … -> resolves via cwd, exit 0
+```
+
+So an unsubstituted placeholder or a failed `git remote get-url` does not announce
+itself. It produces two values quietly derived from cwd — and if both lookups fail
+outright, `[ "" != "" ]` is **false**, the guard does not fire, and execution walks
+into `gh pr merge` with `--repo ""`, which resolves from cwd as well. Rejecting
+empty is what turns that path back into a stop.
+
 A mismatch means one of exactly two things, and both are stop conditions:
 
 1. **The target is the wrong repository.** Two unrelated repos cannot share a head
-   SHA, so this check fails closed however badly the target was resolved — which
-   is the property `--repo` alone cannot give you.
+   SHA, so once both values are known to be non-empty this fails closed however
+   badly the target was resolved — which is the property `--repo` alone cannot
+   give you.
 2. **The branch moved after it was verified.** Someone pushed while the gates were
    running, so merging now lands code that no review and no CI has seen. This is
    the more likely failure on a repo you *are* standing in, and it matters most
@@ -87,18 +116,31 @@ values move together, and the check is only worth anything against current ones.
 
 ### Finding the workspace, when the caller passed none
 
-`git worktree list` is itself cwd-resolved, so it can only be trusted once you
-already know you are in the right repository. Establish that first:
+ship always passes `$WT`. When something else invoked this skill and did not, you
+have to bootstrap — and the bootstrap cannot use `$WT` or `$REPO`, because neither
+exists yet. Start from cwd **as a candidate to be verified, never as an answer**:
 
 ```bash
-BRANCH=$(gh pr view "$PR" --repo "$REPO" --json headRefName --jq '.headRefName')
-git -C "$WT" rev-parse --verify "refs/heads/$BRANCH"
+# A candidate, not a conclusion.
+CAND=$(git rev-parse --show-toplevel) || { echo "ABORT: cwd is not a git repo"; exit 1; }
+CAND_REPO=$(git -C "$CAND" remote get-url origin \
+        | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/]*@##; s#^[^/:]+(:[0-9]+)?[:/]##; s#/+$##; s#\.git$##')
+[ -n "$CAND_REPO" ] || { echo "ABORT: no origin remote in $CAND"; exit 1; }
+
+# Does this repository actually have the PR, and is its branch checked out here?
+BRANCH=$(gh pr view "$PR" --repo "$CAND_REPO" --json headRefName --jq '.headRefName') \
+  || { echo "ABORT: $CAND_REPO has no PR $PR"; exit 1; }
+[ "$(git -C "$CAND" branch --show-current)" = "$BRANCH" ] \
+  || { echo "ABORT: $CAND is on $(git -C "$CAND" branch --show-current), not $BRANCH"; exit 1; }
+
+# Only now are they answers.
+WT=$CAND
+REPO=$CAND_REPO
 ```
 
-If no workspace was passed **and** the current directory's repository does not
-contain the PR's branch, **stop and report**. Do not fall back to cwd and do not
-guess: the whole point of this step is that a plausible-looking wrong answer is
-available at every turn.
+Every branch of that is a stop, and deliberately so: the whole point of this step is
+that a plausible-looking wrong answer is available at every turn. Cwd is allowed to
+*suggest* a target; it is never allowed to *be* one.
 
 ## Step 1: Verify CI status
 
@@ -258,13 +300,21 @@ a confident wrong one:
 
 ```text
 merged <owner>/<repo>#<N> — squash <sha>, branch <branch> torn down, <KEY> → Done
+main working tree: <$MAIN_WT>
 ```
+
+The main working tree is reported because the caller may be standing inside the
+worktree this skill just deleted, and a process whose cwd no longer exists cannot
+run `git` to find its way out. Naming the path is what lets ship `cd` somewhere
+real instead of asking a bare `git worktree list` from a directory that is gone.
 
 ## Error handling
 
 | Situation | Action |
 |---|---|
 | Head SHA mismatch (Step 0) | **Stop.** Report both SHAs and the resolved `$REPO`/`$WT`. Never merge past this. |
+| Either head reads empty (Step 0) | **Stop.** An empty `--repo`/`-C` silently falls back to cwd; empty is never a match. Fix the resolution, do not retry past it. |
+| `$REPO` resolves empty | **Stop.** The workspace has no `origin`, or `$WT` is wrong. Do not continue with an empty `--repo`. |
 | No workspace passed, cwd's repo lacks the branch | **Stop and report.** Do not fall back to cwd. |
 | `gh pr checks` reports zero checks | Not green. Confirm the repo genuinely has no CI (the Step 0 assertion rules out wrong-PR). |
 | CI failing | Stop. Report the failing check. Do not merge. |
@@ -274,7 +324,7 @@ merged <owner>/<repo>#<N> — squash <sha>, branch <branch> torn down, <KEY> →
 | `git branch -d` refused | Use `-D` after confirming the squash succeeded remotely. |
 | `gh pr merge` aborts with "already used by worktree" | Only if `--delete-branch` was passed (Step 3 omits it). The remote merge already succeeded — ignore the error and let Step 4 own cleanup. |
 | `git worktree remove` refused (dirty) | Add `--force`; the remote squash is authoritative. |
-| Worktree already gone | Skip removal; run `git worktree prune` + branch delete, proceed. |
+| Worktree already gone | Skip removal; run `git -C "$MAIN_WT" worktree prune` + branch delete, proceed. |
 | Jira ticket not found | Skip Step 5. Note it to the user. |
 
 ## Workflow context

@@ -68,15 +68,43 @@ command silently addresses the wrong project. Ship's delegates make this worse:
 they are forked subagents that inherit neither the conversation nor this session's
 directory, so "I cd'd into the right place" does not travel to them.
 
+### Stand in the workspace FIRST, then capture
+
+Order matters here, and getting it backwards defeats the whole step. `$WT` must be
+resolved to the PR's actual workspace **before** anything is derived from it —
+otherwise a session that started in the wrong repository captures a wrong `$REPO`
+and a wrong `$HEAD_SHA` on the first line, hands them to every delegate, and the
+prose promise that "`pwd` and `$WT` agree" is never enforced by anything.
+
+So do this in two passes.
+
+**Pass one — find the workspace.** These commands run before `$WT` exists, so they
+are the one place bare `git` is expected:
+
+- `git branch --show-current` equals the PR's `headRefName` → you are already in the
+  right place (a `work-on` worktree or a plain checkout; either is fine).
+- Otherwise find the branch's worktree with `git worktree list` and enter it
+  (`EnterWorktree` with that path, or `cd`). Only fall back to
+  `git checkout <headRefName>` on the shared checkout when no worktree exists.
+- If the branch exists in **no** repository reachable from here, stop and say so.
+  Do not proceed against cwd: a plausible wrong answer is available at every turn,
+  and the rest of this workflow will act on it confidently.
+
+**Pass two — capture, now that you are standing in the right place:**
+
 ```bash
-WT=$(pwd)                                   # the PR's workspace; see below
-REPO=$(git -C "$WT" remote get-url origin \
-        | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')
 PR=<number>
+WT=$(pwd)
+REPO=$(git -C "$WT" remote get-url origin \
+        | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/]*@##; s#^[^/:]+(:[0-9]+)?[:/]##; s#/+$##; s#\.git$##')
+[ -n "$REPO" ] || { echo "ABORT: no origin remote resolvable from $WT"; exit 1; }
 HEAD_SHA=$(git -C "$WT" rev-parse HEAD)
 
 echo "target: $REPO#$PR in $WT @ $HEAD_SHA"
 ```
+
+If you relocate again later for any reason, **re-run this block**. The variables are
+a snapshot of where you were standing, not a subscription.
 
 Record all four. **Every `gh` command in this file takes `--repo "$REPO"`, every
 `git` command takes `-C "$WT"`, and every delegate is handed `$WT` and `$REPO`
@@ -103,21 +131,9 @@ must land while CI is gated off:
 the ticket to In Review in Step 3, at the same moment it marks the PR ready. (work-on
 owns In Progress; merge-pr owns Done.)
 
-**Stand in the PR's workspace**, and resolve `$WT` to it. Later steps run local
-verification and `git push` from there:
-
-- `git branch --show-current` equals the PR's `headRefName` → you're in the right
-  place (a `work-on` worktree or a plain checkout; either is fine).
-- Otherwise find the branch's worktree with `git worktree list` and enter it
-  (`EnterWorktree` with that path, or `cd`). Only fall back to
-  `git checkout <headRefName>` on the shared checkout when no worktree exists.
-- If the branch exists in **no** repository reachable from here, stop and say so.
-  Do not proceed against cwd: a plausible wrong answer is available at every turn,
-  and the rest of this workflow will act on it confidently.
-
-Resolve `$REPO` **from `$WT`**, never from cwd — that is the whole point. Once the
-session has moved, `pwd` and `$WT` agree; the value of naming it is that the
-delegates cannot inherit `pwd` and can be handed `$WT`.
+Later steps run local verification and `git push` from `$WT`, and the delegates —
+which cannot inherit this session's directory — are handed it explicitly. That is
+the value of naming it at all.
 
 ## Step 2 — Self code review on the draft (subagent)
 
@@ -269,7 +285,10 @@ the ledger and PR state make resumption idempotent). On each wake:
   `ExitWorktree action: keep` to return to the original checkout (a no-op if you
   never entered a worktree). Where that tool does not exist (Copilot CLI), `cd` to
   the main working tree instead:
-  `cd "$(git worktree list --porcelain | awk '/^worktree /{sub(/^worktree /,""); print; exit}')"`.
+  `cd` to the **main working tree path that `merge-pr` reported back** (it prints
+  `main working tree: <path>` for exactly this reason). Do not derive it with a bare
+  `git worktree list` here: this branch exists because cwd may be the worktree that
+  was just deleted, and a process whose cwd no longer exists cannot run `git` at all.
 
 ## Red flags
 

@@ -30,12 +30,16 @@ commits and posts comments, so a wrong target writes to the wrong project.
 ```bash
 WT=<absolute path to the PR's workspace>    # ship passes this
 REPO=$(git -C "$WT" remote get-url origin \
-        | sed -E 's#^(git@[^:]+:|https?://[^/]+/)##; s#\.git$##')
+        | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/]*@##; s#^[^/:]+(:[0-9]+)?[:/]##; s#/+$##; s#\.git$##')
+# Empty would be silently accepted by `gh --repo ""`, which then falls back to cwd.
+[ -n "$REPO" ] || { echo "ABORT: no origin remote resolvable from $WT"; exit 1; }
 PR=<number>
 ```
 
-Every `gh` command below takes `--repo "$REPO"`; every `git` command takes
-`-C "$WT"`. Confirm the PR's `headRefName` matches the branch checked out in `$WT`
+Every `gh` command below is scoped to `$REPO` — `gh pr *` via `--repo "$REPO"`,
+and `gh api` by interpolating `$REPO` into the REST path (`gh api` has no `--repo`
+flag). `gh api graphql` takes neither: pass the repository as query variables,
+`-F owner="${REPO%%/*}" -F name="${REPO#*/}"`. Every `git` command takes `-C "$WT"`. Confirm the PR's `headRefName` matches the branch checked out in `$WT`
 before acting — if it does not, stop and report rather than guessing.
 
 If nothing was passed, fall back to the open PR for the current branch, but say
