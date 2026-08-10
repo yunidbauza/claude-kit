@@ -21,20 +21,40 @@ justification and resolve it. Loop until CI is green and no unresolved threads r
 
 Scope boundary: this skill does not announce, watch, or merge — that is `ship`.
 
-## Step 0 — Identify the target PR
+## Step 0 — Identify the target: repository, PR number, workspace
 
-If a PR number or URL was passed as an argument, use it. Otherwise use the open PR
-for the current branch (`gh pr view`). No PR found → ask the user.
+A PR number is not an identifier — `#66` exists in every repository you have worked
+in, and `gh` resolves which one from the current directory. This skill pushes
+commits and posts comments, so a wrong target writes to the wrong project.
+
+```bash
+WT=<absolute path to the PR's workspace>    # ship passes this
+REPO=$(git -C "$WT" remote get-url origin \
+        | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/]*@##; s#^[^/:]+(:[0-9]+)?[:/]##; s#/+$##; s#\.git$##')
+# Empty would be silently accepted by `gh --repo ""`, which then falls back to cwd.
+[ -n "$REPO" ] || { echo "ABORT: no origin remote resolvable from $WT"; exit 1; }
+PR=<number>
+```
+
+Every `gh` command below is scoped to `$REPO` — `gh pr *` via `--repo "$REPO"`,
+and `gh api` by interpolating `$REPO` into the REST path (`gh api` has no `--repo`
+flag). `gh api graphql` takes neither: pass the repository as query variables,
+`-F owner="${REPO%%/*}" -F name="${REPO#*/}"`. Every `git` command takes `-C "$WT"`. Confirm the PR's `headRefName` matches the branch checked out in `$WT`
+before acting — if it does not, stop and report rather than guessing.
+
+If nothing was passed, fall back to the open PR for the current branch, but say
+which repository you resolved so a wrong one is visible in the report rather than
+silent.
 
 ## Step 1 — Gather everything in ONE pass
 
 Do not work from only what the user pasted. Fetch the full picture:
 
 ```bash
-gh pr view <N> --json state,statusCheckRollup,reviews
-gh api repos/{owner}/{repo}/pulls/<N>/comments --paginate   # inline review comments
-gh api repos/{owner}/{repo}/issues/<N>/comments --paginate  # top-level comments (bots post here)
-gh pr checks <N>
+gh pr view "$PR" --repo "$REPO" --json state,statusCheckRollup,reviews
+gh api "repos/$REPO/pulls/$PR/comments" --paginate    # inline review comments
+gh api "repos/$REPO/issues/$PR/comments" --paginate   # top-level comments (bots post here)
+gh pr checks "$PR" --repo "$REPO"
 ```
 
 Collect: unresolved reviewer comments, bot findings, quality-gate failures, failing
@@ -79,13 +99,13 @@ in the final report instead of guessing.
 
 ## Step 5 — Post replies safely
 
-- Heredoc-quote comment bodies (`gh pr comment ... --body-file - <<'EOF'`), never
+- Heredoc-quote comment bodies (`gh pr comment "$PR" --repo "$REPO" --body-file - <<'EOF'`), never
   backslash-escape backticks.
-- Inline replies: `gh api repos/{owner}/{repo}/pulls/<N>/comments/<id>/replies`.
+- Inline replies: `gh api "repos/$REPO/pulls/$PR/comments/<id>/replies"`.
   On **HTTP 422** ("Line/Path could not be resolved") fall back to a top-level
   comment quoting `file:line` — do not retry the inline call.
 - On **"one pending review per pull request"**: submit or delete the pending review
-  first (`gh api .../pulls/<N>/reviews` to find it).
+  first (`gh api "repos/$REPO/pulls/$PR/reviews"` to find it).
 
 ## Step 6 — Verify, push, loop until green
 
