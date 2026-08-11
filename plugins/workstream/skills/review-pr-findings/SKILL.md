@@ -24,8 +24,11 @@ Scope boundary: this skill does not announce, watch, or merge — that is `ship`
 ## Step 0 — Identify the target: repository, PR number, workspace
 
 A PR number is not an identifier — `#66` exists in every repository you have worked
-in, and `gh` resolves which one from the current directory. This skill pushes
-commits and posts comments, so a wrong target writes to the wrong project.
+in, and `gh` resolves which one from the current directory. This skill **pushes
+commits and posts comments**, so a wrong target does not merely read the wrong
+project, it writes to it.
+
+Resolve all three in one call, before anything else:
 
 ```bash
 WT=<absolute path to the PR's workspace>    # ship passes this
@@ -33,28 +36,67 @@ REPO=$(git -C "$WT" remote get-url origin \
         | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/]*@##; s#^[^/:]+(:[0-9]+)?[:/]##; s#/+$##; s#\.git$##')
 # Empty would be silently accepted by `gh --repo ""`, which then falls back to cwd.
 [ -n "$REPO" ] || { echo "ABORT: no origin remote resolvable from $WT"; exit 1; }
-PR=<number>
+echo "target: $REPO#<N> in $WT"
 ```
 
-Every `gh` command below is scoped to `$REPO` — `gh pr *` via `--repo "$REPO"`,
-and `gh api` by interpolating `$REPO` into the REST path (`gh api` has no `--repo`
-flag). `gh api graphql` takes neither: pass the repository as query variables,
-`-F owner="${REPO%%/*}" -F name="${REPO#*/}"`. Every `git` command takes `-C "$WT"`. Confirm the PR's `headRefName` matches the branch checked out in `$WT`
-before acting — if it does not, stop and report rather than guessing.
+**Record the repo, PR number and workspace as literals and substitute them textually
+below — do not carry them in shell variables.** Shell state does not survive between
+calls, so a `$REPO` set here is empty in the next one, and `gh --repo ""` does not
+error: it resolves from cwd, which is exactly what this step exists to distrust.
 
-If nothing was passed, fall back to the open PR for the current branch, but say
-which repository you resolved so a wrong one is visible in the report rather than
-silent.
+Scoping differs by command family, because `gh` is not uniform:
+
+| Command | How the repo is carried |
+|---|---|
+| `gh pr *` | `--repo <owner>/<repo>` |
+| `gh api` (REST) | interpolate the slug into the path — there is **no** `--repo` flag |
+| `gh api graphql` | neither works: pass query variables, `-F owner=<owner> -F name=<repo>` |
+| `git` | `-C <workspace>` |
+
+Confirm the PR's `headRefName` matches the branch checked out in the workspace before
+acting — if it does not, stop and report rather than guessing.
+
+### When nothing was passed
+
+`ship` always passes the triple. When something else invoked this skill and did not,
+cwd is a **candidate to be verified, never an answer** — and the bar here is the same
+as `merge-pr`'s, not lower. It is arguably higher: `merge-pr` performs one
+irreversible act, while this skill pushes commits, posts comments and resolves
+threads, so a wrong target writes to another project repeatedly, under the user's own
+account, before anyone notices.
+
+Announcing the resolved repository is **not** a substitute for verifying it. A report
+naming the wrong repo is still a wrong-repo write; it just documents itself.
+
+```bash
+CAND=$(git rev-parse --show-toplevel) || { echo "ABORT: cwd is not a git repo"; exit 1; }
+CAND_REPO=$(git -C "$CAND" remote get-url origin \
+        | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^/]*@##; s#^[^/:]+(:[0-9]+)?[:/]##; s#/+$##; s#\.git$##')
+[ -n "$CAND_REPO" ] || { echo "ABORT: no origin remote in $CAND"; exit 1; }
+
+# The PR must exist in THIS repository, and its branch must be checked out HERE.
+BRANCH=$(gh pr view <N> --repo "$CAND_REPO" --json headRefName --jq '.headRefName') \
+  || { echo "ABORT: $CAND_REPO has no PR <N>"; exit 1; }
+[ "$(git -C "$CAND" branch --show-current)" = "$BRANCH" ] \
+  || { echo "ABORT: $CAND is on $(git -C "$CAND" branch --show-current), not $BRANCH"; exit 1; }
+
+echo "resolved: $CAND_REPO in $CAND"   # record both as literals
+```
+
+With no PR number either, resolve the open PR for the branch checked out in `$CAND`
+(`gh pr view "$(git -C "$CAND" branch --show-current)" --repo "$CAND_REPO"`) and run
+the same checks against the result. No PR found, or any check above failing → **stop
+and ask the user.** Do not fall back to cwd.
 
 ## Step 1 — Gather everything in ONE pass
 
 Do not work from only what the user pasted. Fetch the full picture:
 
 ```bash
-gh pr view "$PR" --repo "$REPO" --json state,statusCheckRollup,reviews
-gh api "repos/$REPO/pulls/$PR/comments" --paginate    # inline review comments
-gh api "repos/$REPO/issues/$PR/comments" --paginate   # top-level comments (bots post here)
-gh pr checks "$PR" --repo "$REPO"
+gh pr view <N> --repo <owner>/<repo> --json state,statusCheckRollup,reviews
+gh api "repos/<owner>/<repo>/pulls/<N>/comments" --paginate    # inline review comments
+gh api "repos/<owner>/<repo>/issues/<N>/comments" --paginate   # top-level comments (bots post here)
+gh pr checks <N> --repo <owner>/<repo>
 ```
 
 Collect: unresolved reviewer comments, bot findings, quality-gate failures, failing
@@ -99,13 +141,13 @@ in the final report instead of guessing.
 
 ## Step 5 — Post replies safely
 
-- Heredoc-quote comment bodies (`gh pr comment "$PR" --repo "$REPO" --body-file - <<'EOF'`), never
+- Heredoc-quote comment bodies (`gh pr comment <N> --repo <owner>/<repo> --body-file - <<'EOF'`), never
   backslash-escape backticks.
-- Inline replies: `gh api "repos/$REPO/pulls/$PR/comments/<id>/replies"`.
+- Inline replies: `gh api "repos/<owner>/<repo>/pulls/<N>/comments/<id>/replies"`.
   On **HTTP 422** ("Line/Path could not be resolved") fall back to a top-level
   comment quoting `file:line` — do not retry the inline call.
 - On **"one pending review per pull request"**: submit or delete the pending review
-  first (`gh api "repos/$REPO/pulls/$PR/reviews"` to find it).
+  first (`gh api "repos/<owner>/<repo>/pulls/<N>/reviews"` to find it).
 
 ## Step 6 — Verify, push, loop until green
 
