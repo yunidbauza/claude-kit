@@ -61,9 +61,12 @@ for (const status of ['PENDING-APPROVAL', 'CLEARED', 'DONE', 'FAILED', 'NEEDS-DE
 
 test('PENDING-APPROVAL never blocks — it is the Phase 1 approval gate', () => {
   const md = brief({ status: 'PENDING-APPROVAL', outcome: '- [ ] a\n- [ ] b\n', evidence: '' });
-  const r = decide(md);
+  const r = decide(md, () => '2026-01-01T00:00:00.000Z');
   assert.equal(r.action, 'allow');
-  assert.equal(r.write, undefined, 'must not rewrite the header while awaiting approval');
+  // It writes — the liveness stamp — but must not touch the status, which is the
+  // user's approval gate.
+  assert.match(r.write, /^status: PENDING-APPROVAL$/m);
+  assert.match(r.write, /^last_verified: 2026-01-01T00:00:00\.000Z$/m);
 });
 
 // --- blocking ----------------------------------------------------------------
@@ -196,14 +199,16 @@ test('no ## Outcome section: releases but never stamps DONE', () => {
   const md = '---\nstatus: ACTIVE\nturns_used: 0\nturn_budget: 8\n---\n\n## Task\n\nx\n';
   const r = decide(md);
   assert.equal(r.action, 'allow');
-  assert.equal(r.write, undefined, 'unverifiable brief must not be marked DONE');
+  assert.doesNotMatch(r.write, /status: DONE/, 'unverifiable brief must not be marked DONE');
+  assert.match(r.write, /^status: ACTIVE$/m);
 });
 
 test('Outcome written as prose with no checkboxes: releases but never stamps DONE', () => {
   const md = brief({ outcome: 'Ship the thing and make sure it works.\n' });
   const r = decide(md);
   assert.equal(r.action, 'allow');
-  assert.equal(r.write, undefined);
+  assert.doesNotMatch(r.write, /status: DONE/);
+  assert.match(r.write, /^status: ACTIVE$/m);
 });
 
 test('a heading-like line inside a fenced block does not truncate the Outcome', () => {
@@ -272,4 +277,58 @@ test('sessionIdOf rejects ids that could escape the brief directory', () => {
   assert.equal(sessionIdOf({ sessionId: 'a/b' }), null);
   assert.equal(sessionIdOf({ sessionId: '..' }), null);
   assert.equal(sessionIdOf({ sessionId: 'ok-123_ABC.def' }), 'ok-123_ABC.def');
+});
+
+// --- the liveness stamp ------------------------------------------------------
+
+// `last_verified` is the only evidence that the verifier ran at all. Both verifiers
+// fail open on any error — mandatory, so a broken one cannot wedge a session — and
+// failing open is indistinguishable from succeeding unless something is written
+// down. Under Claude Code the failure is real: the `agent` hook reads the brief
+// through the Read tool, and a bypass-permissions session denies it.
+
+const AT = () => '2026-01-01T00:00:00.000Z';
+
+test('every decision that parsed the brief stamps last_verified', () => {
+  const cases = {
+    'awaiting approval': brief({ status: 'PENDING-APPROVAL' }),
+    terminal: brief({ status: 'DONE' }),
+    'budget spent': brief({ turns: 8, budget: 8 }),
+    verified: brief(),
+    blocking: brief({ outcome: '- [ ] not done\n', evidence: '' }),
+    'nothing to verify': brief({ outcome: 'prose, no checkboxes\n' }),
+  };
+
+  for (const [label, md] of Object.entries(cases)) {
+    const r = decide(md, AT);
+    assert.match(
+      r.write ?? '',
+      /^last_verified: 2026-01-01T00:00:00\.000Z$/m,
+      `${label}: must record that the verifier ran`,
+    );
+  }
+});
+
+test('a brief with no frontmatter is not stamped', () => {
+  // Nothing was parsed, so there is nothing to make a liveness claim about — a
+  // stamp here would assert the verifier read a brief it never understood.
+  const r = decide('# just a document\n\nno header here', AT);
+  assert.equal(r.action, 'allow');
+  assert.equal(r.write, undefined);
+});
+
+test('the stamp is refreshed rather than appended twice', () => {
+  const once = decide(brief(), () => '2026-01-01T00:00:00.000Z').write;
+  const twice = decide(once, () => '2026-02-02T00:00:00.000Z').write;
+
+  assert.equal((twice.match(/^last_verified:/gm) ?? []).length, 1);
+  assert.match(twice, /^last_verified: 2026-02-02T00:00:00\.000Z$/m);
+});
+
+test('stamping leaves the body untouched', () => {
+  const md = brief();
+  const r = decide(md, AT);
+  const bodyOf = (text) => text.slice(text.indexOf('---', 4) + 3);
+
+  assert.equal(bodyOf(r.write), bodyOf(md));
 });
