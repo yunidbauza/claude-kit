@@ -17,17 +17,30 @@ hooks:
             You are the goal-on verifier. $ARGUMENTS holds the Stop hook input JSON.
 
             1. Read `session_id` from $ARGUMENTS.
-            2. Read ~/.claude/workstream/goal-on/<session_id>.md.
-               Missing or unreadable -> return ok:true. This is not a goal-on session.
+            2. Read ~/.claude/workstream/goal-on/<session_id>.md. Two different
+               outcomes look alike here and must NOT be collapsed:
+               - The file does not exist -> return ok:true. This is not a goal-on
+                 session, and there is nothing to enforce.
+               - The read was DENIED or errored -> return ok:true, and say so in
+                 the reason. A refused tool call is not evidence that the file is
+                 absent. Treating it as one is what lets a disarmed verifier pass
+                 for an idle one.
             3. Parse the YAML header: status, route, turns_used, turn_budget.
-            4. Return ok:true immediately if status is PENDING-APPROVAL, CLEARED,
+            4. Stamp `last_verified: <current UTC time, ISO-8601>` into the header
+               NOW, and on EVERY path below including the early returns.
+               This is the only evidence that you ran at all. You fail open on any
+               error — mandatory, see the hard rules — and failing open is
+               indistinguishable from succeeding unless something is written down.
+               A verifier denied its tools cannot write this either, so an absent
+               stamp is a reliable signal rather than a guess. Phase 2 checks for it.
+            5. Return ok:true immediately if status is PENDING-APPROVAL, CLEARED,
                DONE, FAILED, or NEEDS-DECISION. PENDING-APPROVAL means Phase 1 has
                presented the brief and is waiting on the user — the turn MUST be
                allowed to end so they can answer. Never block a brief the user has
-               not authorized yet.
-            5. If turns_used >= turn_budget: rewrite the header to status: FAILED,
+               not authorized yet. (Stamp first; the status is untouched.)
+            6. If turns_used >= turn_budget: rewrite the header to status: FAILED,
                then return ok:true. The stop rule has tripped.
-            6. Otherwise verify the `## Outcome` checklist for real. Do NOT trust
+            7. Otherwise verify the `## Outcome` checklist for real. Do NOT trust
                claims made in the conversation. Check evidence only:
                - Every file or artifact named in Outcome exists and is non-empty.
                - If route is code: run `gh pr view --json number,state,isDraft,headRefName`
@@ -36,9 +49,9 @@ hooks:
                  ship handoff.
                - `## Verification evidence` contains actual command output for every
                  check named in Outcome, and none of it shows a failure.
-            7. Every Outcome item satisfied -> rewrite the header to status: DONE,
+            8. Every Outcome item satisfied -> rewrite the header to status: DONE,
                then return ok:true.
-            8. Otherwise -> increment turns_used by 1 in the header, then return
+            9. Otherwise -> increment turns_used by 1 in the header, then return
                ok:false with a reason naming the SPECIFIC unmet Outcome items and
                the single next concrete action.
 
@@ -48,9 +61,10 @@ hooks:
               would defeat this skill entirely.
             - Absent evidence is UNMET, never met. Do not infer, do not extrapolate.
             - If you cannot finish verification for any reason — tool error,
-              unreadable state, running out of time — return ok:true.
+              denied tool, unreadable state, running out of time — return ok:true.
               Failing open is mandatory; a broken verifier must never wedge the
-              session.
+              session. It is NOT licence to fail open *quietly*: say what stopped
+              you, and never write `last_verified` for a check you did not run.
             - Be terse. Your reason becomes the model's next instruction.
 ---
 
@@ -84,6 +98,7 @@ route: code                # artifact | code
 turns_used: 0
 turn_budget: 8
 created: 2026-07-27T14:30:00Z
+last_verified: 2026-07-27T14:31:02Z   # written by the verifier, never by you
 branch: goal/widget-cache   # code route only
 workspace: worktree        # code route only — "current" (in place) or "worktree" (isolation-guarded / background session)
 ---
@@ -121,6 +136,14 @@ If `disableAllHooks` or `allowManagedHooksOnly` is set, or the workspace is
 untrusted, say so plainly now and continue in degraded mode — the brief is still
 worth writing, but nothing will enforce persistence. Never arm silently and let the
 user believe the goal is being held.
+
+**These three checks are necessary and not sufficient, so do not report them as
+proof.** Under Claude Code the verifier is an `agent` hook that reaches the brief
+through the Read tool, and a session where that tool is denied — bypass-permissions
+/ don't-ask mode is the observed case — leaves every gate here green while the
+verifier releases each turn having read nothing. Say "the hooks are configured"
+rather than "the goal will be enforced"; Phase 2's first act is what actually
+establishes the latter.
 
 **2. Extract the Task.** One sentence naming the objective, not the symptom. "Users
 see stale prices" is a symptom; "make the price cache invalidate on write" is a
@@ -180,9 +203,22 @@ Phase 2 without it. If the user amends anything, rewrite the brief (still
 
 ## Phase 2 — Execute (autonomous)
 
-**First act, before anything else: flip the brief header to `status: ACTIVE`.** That
-single edit is what arms the verifier. Until it happens the hook releases every turn
-and nothing is being enforced. Do it only once the user has actually approved.
+**First act, before anything else: read the brief, flip the header to
+`status: ACTIVE`, and check that `last_verified` is there.** Do this only once the
+user has actually approved.
+
+The flip is what arms the verifier; until it happens the hook releases every turn by
+design. The check is what proves there is a verifier to arm. Phase 1 always ends on
+a turn boundary — the brief is presented and the turn ends awaiting approval — so
+the hook has already fired at least once by the time you read this, and it stamps
+`last_verified` on every path it completes.
+
+**No `last_verified` means nothing is enforcing the goal.** Say so plainly, in those
+terms, and carry on in degraded mode: the brief is still the contract and you still
+hold yourself to it, but the user must not be left believing a hook is checking your
+work when none is. The most likely cause is a verifier whose own tools were denied —
+it fails open, as it must, and a verifier that cannot read the brief cannot write the
+stamp either, which is exactly what makes the absence meaningful.
 
 The verifier is then watching. Record evidence as you go: append real command output
 to `## Verification evidence` in the brief. The verifier reads that section and
@@ -248,8 +284,21 @@ because Copilot has no LLM-prompt hook type (only `command`, `http`, and `prompt
 |---|---|---|
 | Declared in | `hooks:` in this file's frontmatter | `hooks.json` at the plugin root |
 | Type | `agent` — an LLM reads the brief | `command` — `scripts/verify-goal.mjs` |
+| Reaches the brief via | the **Read tool** — permission-gated | `readFileSync` — not gated |
 | Verification | **Semantic**: judges whether the evidence actually supports each Outcome item | **Mechanical**: every Outcome item ticked `- [x]`, and `## Verification evidence` non-empty |
 | Registers when | this skill is invoked | the plugin is installed (fails open otherwise) |
+
+**That fourth row is the one that bites.** The Claude verifier is a subagent, and a
+subagent's tools are subject to the session's permission mode — in a
+bypass-permissions / don't-ask session both Read and Bash come back denied, because
+there is no one to prompt at turn-end and the default is refusal. It then fails open,
+as it must, and the goal is not enforced for the rest of the session. The Copilot
+verifier is a Node process reading the file directly and cannot fail this way.
+
+Neither can *announce* the problem: a Stop hook's release is silent by construction.
+So both stamp `last_verified` on every path they complete, and Phase 2 reads it. That
+is the whole detection story, and it is deliberately built out of a **write** rather
+than a message — a verifier that lost its tools loses the stamp with them.
 
 The two speak different protocols and are not interchangeable: the Claude `agent`
 hook returns `ok: true|false`, while Copilot's `agentStop` expects
@@ -306,6 +355,12 @@ carry a `skillRoot`, which this one does.
   section, not the conversation, and absent evidence is unmet.
 - Re-invoking `goal-on` while a goal is active → each invocation registers another
   verifier, doubling the per-turn cost for no benefit. Amend the brief instead.
+- Telling the user the goal "is being held" on the strength of Phase 1's gate checks
+  → they prove the hook is *configured*, not that it can *run*. `last_verified` is
+  the proof, and it does not exist until the first turn has ended.
+- Starting Phase 2 without looking for `last_verified` → a verifier whose tools are
+  denied is invisible in every other way, and the whole point of this skill is that
+  something other than your own judgement is holding the Outcome.
 - Forcing the current checkout in a background / `claude agents` / isolation-guarded
   session → its guard rejects edits to the shared checkout; use `workspace: worktree`
   there. (An interactive foreground session still works in place.)

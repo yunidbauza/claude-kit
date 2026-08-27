@@ -168,21 +168,50 @@ export const bumpTurns = (md, next) => setHeaderField(md, 'turns_used', next);
 /**
  * Core decision. Pure apart from the caller's file write, so tests drive it directly.
  * Returns {action: 'allow'|'block', reason?, write?}
+ *
+ * `now` is injected for the same reason the rest of this is pure: a real clock makes
+ * the `last_verified` stamp unassertable.
  */
-export function decide(md) {
+export function decide(md, now = () => new Date().toISOString()) {
   const split = splitFrontmatter(md);
-  if (!split) return { action: 'allow' }; // not a brief we understand — fail open
+  // Not a brief we understand — fail open, and stamp nothing. A `last_verified` on
+  // a file this verifier could not parse would be a liveness claim about a brief it
+  // never actually read.
+  if (!split) return { action: 'allow' };
+
+  /**
+   * Every path below writes, and the stamp is why.
+   *
+   * `last_verified` is the only evidence that the verifier ran *at all*, and it
+   * exists because the alternative is silence. Both verifiers fail open on any
+   * error — mandatory, since one that failed closed could wedge a session with no
+   * way out — but failing open is indistinguishable from succeeding unless
+   * something is written down. Under Claude Code the failure is real and observed:
+   * the `agent` hook reaches this file through the Read tool, and a session in
+   * bypass-permissions mode denies it, so the verifier releases every turn having
+   * checked nothing.
+   *
+   * A verifier that cannot read the brief cannot write this either, which is what
+   * makes an absent stamp a reliable signal rather than a guess. Phase 1 always
+   * ends on a turn boundary, so by the time Phase 2 begins the stamp is either
+   * there or nothing is enforcing the goal. `SKILL.md` has the check.
+   *
+   * Stamped even on the terminal statuses. It costs one atomic write per turn end
+   * and keeps the signal true for the whole session rather than only until the
+   * goal is settled.
+   */
+  const stamped = setHeaderField(md, 'last_verified', now());
 
   const { header, body } = split;
   const status = headerValue(header, 'status');
-  if (!status || TERMINAL.has(status)) return { action: 'allow' };
+  if (!status || TERMINAL.has(status)) return { action: 'allow', write: stamped };
 
   const turnsUsed = Number.parseInt(headerValue(header, 'turns_used') ?? '0', 10) || 0;
   const budget = Number.parseInt(headerValue(header, 'turn_budget') ?? '8', 10) || 8;
 
   // Stop rule tripped: record the failure and release, never loop forever.
   if (turnsUsed >= budget) {
-    return { action: 'allow', write: setHeaderStatus(md, 'FAILED') };
+    return { action: 'allow', write: setHeaderStatus(stamped, 'FAILED') };
   }
 
   const outcome = section(body, 'Outcome');
@@ -192,11 +221,12 @@ export function decide(md) {
 
   // No Outcome section, or one with no checkbox items at all: there is nothing
   // mechanical to verify. Release the turn, but do NOT stamp DONE — claiming success
-  // on an unverifiable brief is worse than not verifying at all.
-  if (total === 0) return { action: 'allow' };
+  // on an unverifiable brief is worse than not verifying at all. The liveness stamp
+  // is not a success claim and rides along regardless.
+  if (total === 0) return { action: 'allow', write: stamped };
 
   if (unchecked.length === 0 && evidenceOk) {
-    return { action: 'allow', write: setHeaderStatus(md, 'DONE') };
+    return { action: 'allow', write: setHeaderStatus(stamped, 'DONE') };
   }
 
   const reasons = [];
@@ -212,7 +242,7 @@ export function decide(md) {
   }
   reasons.push(`Turn ${turnsUsed + 1}/${budget}. Do the next unmet item, then tick it.`);
 
-  return { action: 'block', reason: reasons.join('. '), write: bumpTurns(md, turnsUsed + 1) };
+  return { action: 'block', reason: reasons.join('. '), write: bumpTurns(stamped, turnsUsed + 1) };
 }
 
 /** Write via temp + rename so a crash mid-write cannot truncate the user's brief. */
