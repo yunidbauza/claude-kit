@@ -10,7 +10,7 @@ to end:
 | `/workstream:goal-on <prompt>` | Ad-hoc entry point: rewrite a vague request into a Task/Scope/Constraints/Outcome/Stop-Rules brief, then drive it to a verified finish (artifact) or a draft PR handed to ship (code) |
 | `/workstream:ship [PR] [--auto-merge]` | PR endgame: CI watch → self code review → findings triage loop → watch-until-approved with base-branch sync → merge |
 | `/workstream:review-pr-findings [PR]` | Adversarial triage of all PR feedback with a persistent per-PR ledger; loops until CI is green with no unresolved threads |
-| `/workstream:merge-pr [PR]` | Squash merge, worktree/branch teardown, default-branch pull, Jira ticket → Done |
+| `/workstream:merge-pr [PR]` | Merge-time gate (threads, checks, pending reviewers, head SHA — all re-read in the call before merging), squash merge, worktree/branch teardown, default-branch pull, Jira ticket → Done |
 | `/workstream:spec-deviation` | Propagate a mid-work spec change to the PR, the ticket, and affected downstream tickets |
 
 See `docs/TICKET_WORKFLOW.md` for the lifecycle diagram, conventions, and state
@@ -117,6 +117,12 @@ numbered prose question.
   adversarially assessed (VALID / INVALID / NEEDS-USER-DECISION) before any fix;
   invalid findings get a reasoned reply, and a per-PR ledger prevents re-litigating
   across rounds and sessions.
+- **The merge gate is re-read at the moment of merging** — unresolved review threads,
+  running checks, reviewers that were asked and haven't submitted (a review agent
+  still working is the common one), and the head SHA all come from a single reading
+  taken in the call before `gh pr merge`. An earlier reading — ship's approval loop,
+  a findings run that returned "all resolved", or the same check run before the user
+  said "merge it" — is evidence the PR *was* ready, never authorisation to merge.
 - **One user checkpoint** — the merge confirmation. With `--auto-merge` (flag, or
   per-repo config in `ship-config.json`) ship doesn't wait for a human PR approval
   at all: CI green + every finding resolved is the approval signal, and it hands
