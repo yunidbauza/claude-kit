@@ -566,9 +566,34 @@ shared checkout. Resolve the head branch and detect which case applies:
 BRANCH=$(gh pr view <N> --repo <owner>/<repo> --json headRefName --jq '.headRefName')   # <N> = the number recorded in Step 0 — always present by now, never drop it
 DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
 [ -n "$BRANCH" ] && [ -n "$DEFAULT" ] || { echo "ABORT: branch/default not resolved"; exit 1; }
-git -C <workspace> worktree list --porcelain | grep -qxF "branch refs/heads/$BRANCH" \
-  && echo WORKTREE || echo BRANCH
+
+# Which checkout holds the branch, and which one is the main working tree?
+MAIN_WT=$(git -C "<workspace>" worktree list --porcelain \
+          | awk '/^worktree /{sub(/^worktree /,""); print; exit}')
+WT_PATH=$(git -C "<workspace>" worktree list --porcelain \
+          | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{p=$0; sub(/^worktree /,"",p)} $0==b{print p; exit}')
+[ -n "$MAIN_WT" ] || { echo "ABORT: main working tree not resolved"; exit 1; }
+
+if   [ -z "$WT_PATH" ];              then echo "NEITHER   (no checkout here holds $BRANCH)"
+elif [ "$WT_PATH" = "$MAIN_WT" ];    then echo "BRANCH    (main working tree $MAIN_WT)"
+else                                      echo "WORKTREE  ($WT_PATH, main is $MAIN_WT)"
+fi
 ```
+
+**Holding the branch is not the same as being a worktree to remove**, and conflating
+them is the failure this block is written to avoid. `git worktree list` **always
+lists the main working tree first**, as an ordinary entry with its own `branch` line —
+so a plain topic branch checked out in the shared clone matches a bare
+`grep "branch refs/heads/$BRANCH"` exactly as a linked worktree does. Detecting on
+that match alone sends every non-worktree PR into Case A, where
+`git worktree remove` refuses on the main working tree (`fatal: … is a main working
+tree`) and teardown stops there: branch never deleted, remote branch never deleted,
+default branch never pulled — after a merge that succeeded. Loud enough to notice,
+quiet enough to look like a post-merge hiccup rather than a skipped step.
+
+Comparing `$WT_PATH` against `$MAIN_WT` is what separates the two, and it collapses
+all three outcomes into one reading: no path (nothing here holds the branch), the main
+path (Case B), or some other path (Case A).
 
 **Re-derive `BRANCH` and `DEFAULT` at the top of every block below, and always
 expand them quoted — `"$BRANCH"`, `"$DEFAULT"`.** This is the one place the
@@ -592,10 +617,10 @@ crosses a call, and it never appears as bare text. Quote every expansion, includ
 **Nothing here deletes a branch the workspace does not hold.** This check is what
 guards teardown, in place of Step 0's head-SHA assertion — which cannot run on the
 already-merged fast path, where the workspace may already be back on the default
-branch. If neither case below matches, the workspace is not this PR's: skip teardown,
-say so, and go to Step 5.
+branch. On `NEITHER` the workspace is not this PR's: skip teardown, say so, and go to
+Step 5.
 
-### Case A — the branch has a worktree (default for `work-on` tickets)
+### Case A — the branch has its own **linked** worktree (default for `work-on` tickets)
 
 Tear the worktree down with **git**, not `ExitWorktree` — this skill runs in a
 forked subagent, and `ExitWorktree` only acts on worktrees the same session created.
@@ -612,6 +637,9 @@ MAIN_WT=$(git -C "<workspace>" worktree list --porcelain \
 WT_PATH=$(git -C "<workspace>" worktree list --porcelain \
           | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{p=$0; sub(/^worktree /,"",p)} $0==b{print p; exit}')
 [ -n "$MAIN_WT" ] && [ -n "$WT_PATH" ] || { echo "ABORT: worktree not resolved"; exit 1; }
+# The detection above already established these differ. Re-assert it: this block is
+# its own call, and `worktree remove` on the main working tree cannot succeed.
+[ "$WT_PATH" != "$MAIN_WT" ] || { echo "ABORT: $BRANCH is in the main working tree — this is Case B"; exit 1; }
 
 git -C "$MAIN_WT" worktree remove "$WT_PATH" --force   # --force: after a squash the branch has commits not on local main
 git -C "$MAIN_WT" worktree prune
@@ -630,7 +658,7 @@ one call, but record `$MAIN_WT`'s value: the report at the end has to name it, a
 that is a later call. The emptiness guard is there for the same reason it is in Step
 0 — `git -C ""` does not error, it operates on cwd.
 
-### Case B — a plain topic branch
+### Case B — a plain topic branch in the main working tree
 
 ```bash
 # Same rule as Case A: re-read here, expand quoted, never inline as text.
@@ -761,7 +789,9 @@ instead of asking a bare `git worktree list` from a directory that is gone.
 | Repo-qualified re-run on a merged PR, no workspace passed | Resolve state from the supplied repo **first**. Do not demand a branch workspace — teardown already removed it, and requiring it would break the documented recovery. |
 | No workspace passed, cwd's repo lacks the branch | **Stop and report.** Do not fall back to cwd. |
 | `gh pr checks` reports zero checks | Not green. Confirm the repo genuinely has no CI (Step 0's assertion rules out a wrong PR). |
-| Step 4 finds the workspace on neither the branch nor its worktree | Skip teardown entirely and report it. Never delete a branch from a workspace that does not hold it. |
+| Step 4 detection returns `NEITHER` | Skip teardown entirely and report it. Never delete a branch from a workspace that does not hold it. |
+| Step 4 detection returns `BRANCH` because `$WT_PATH` equals `$MAIN_WT` | Case B. The branch is checked out in the shared clone, not a linked worktree — there is no worktree to remove. |
+| `git worktree remove` says `is a main working tree` | The detection sent a Case B teardown into Case A. Do not force it; re-run the detection and take Case B. |
 | CI failing | Stop. Report the failing check. Do not merge. |
 | CI not yet run | Wait for checks to complete. Do not skip. |
 | Merge conflict | Resolve via Step 2 (understand both intents, verify, push), then **re-run Step 0's assertion** — the push moved both heads. Abort and report for confirmation if the resolution breaks/changes previously merged functionality. |
@@ -851,3 +881,9 @@ instead of asking a bare `git worktree list` from a directory that is gone.
   an author or reviewer wrote.
 - **Passing `--delete-branch` to `gh pr merge`** → Step 4 owns all teardown; gh aborts
   on the worktree and leaves local cleanup half done.
+- **Reading "the workspace holds the branch" as "the branch has a worktree"** →
+  `git worktree list` lists the **main working tree first**, with its own `branch`
+  line, so a plain topic branch matches a bare `grep` exactly as a linked worktree
+  does. Case A then dies on `fatal: … is a main working tree` and teardown stops
+  half-done after a successful merge. Compare `$WT_PATH` against `$MAIN_WT`; only a
+  different path is a worktree.
