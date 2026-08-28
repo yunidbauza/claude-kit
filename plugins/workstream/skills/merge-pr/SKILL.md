@@ -3,9 +3,9 @@ name: merge-pr
 description: >-
   Use when the user asks to "merge the PR", "squash and merge", "complete the
   merge", "finish the PR", or an orchestrating skill (ship) hands off a PR that is
-  approved and green. Runs the full merge checklist — verify CI, squash merge,
-  tear down the worktree or local branch, pull main, and move the linked Jira
-  ticket to Done. Pass the repo-qualified PR and a ticket key
+  approved and green. Runs the full merge checklist — verify CI, re-check every
+  merge blocker at the instant of merging, squash merge, tear down the worktree or
+  local branch, pull main, and move the linked Jira ticket to Done. Pass the repo-qualified PR and a ticket key
   (`merge-pr owner/repo#123 PROJ-456`) to close it; a key found only in the
   branch name is reported, not transitioned.
 context: fork
@@ -158,8 +158,11 @@ A mismatch means one of exactly two things, and both are stop conditions:
    likely failure on a repo you *are* standing in, and it matters most under ship's
    `--auto-merge`, where nothing else is watching.
 
-Re-run the assertion immediately before Step 3 if Step 2 pushed a sync merge: both
-values move together, and the check is only worth anything against current ones.
+This comparison is not run on its own before the merge. **Step 3's gate performs it**,
+in the same call that reads the review threads and the checks, so all of them describe
+one instant. Run it standalone here only as pre-flight — to fail fast on a wrong target
+before Steps 1 and 2 do any work. A pre-flight pass is never what authorises the merge;
+only the gate's own reading is.
 
 **Scope of the assertion — it gates Step 3, not the whole run.** On the already-merged
 fast path below there is no merge to gate, and the workspace may legitimately be gone
@@ -283,7 +286,11 @@ that a plausible-looking wrong answer is available at every turn. Cwd is allowed
   from the branch name, the PR title, or the PR body; Step 5 handles that case
   explicitly.
 
-## Step 1: Verify CI status
+## Step 1: Verify CI status (pre-flight)
+
+This reading fails fast on a PR that is nowhere near mergeable. It does **not**
+authorise the merge — Step 3's gate re-reads all of it at merge time, because
+everything below can change while Step 2 runs.
 
 ```bash
 gh pr checks <N> --repo <owner>/<repo>
@@ -384,17 +391,149 @@ touches the base branch, it needs its own re-read and guard.
   conflicting files, both sides' intent, and your proposed resolution, so the
   user can confirm before merge-pr is re-run.
 
-Anything pushed here moves both the PR head and the workspace head. **Re-run Step 0's
-assertion before Step 3.**
+Anything pushed here moves both the PR head and the workspace head — and restarts CI,
+and can wake a review agent. Step 3's gate is what catches all of that; a push here is
+one more reason its reading must be taken *after* this step, never before it.
 
-## Step 3: Squash merge
+## Step 3: The merge gate, then the squash merge
 
-Step 0's head-SHA assertion must have passed against **current** values immediately
-before this command. It is the only check that fails closed on a wrong repository.
+Everything above this line is **pre-flight**. It establishes that the PR *was*
+mergeable. It does not establish that it *is*. Between any earlier check and this
+moment a reviewer can submit findings, a review agent that was still running can
+finish and post them, a teammate can push, and CI can start over — none of which
+announces itself.
+
+That is the failure this step exists for, and it is not a missing check: it is the
+**right check run at the wrong time**. A reading taken before the instruction to merge
+arrived — before the user said "merge it", before ship's watch loop woke — describes
+the moment it was taken and nothing since. A merge gate is only a gate if it is
+evaluated **at the instant of merging**. Minutes-old is stale; "I checked that
+already" is the answer of someone who is about to merge past a finding.
+
+So the gate below is not a step you pass and carry forward. It is a reading with a
+lifetime of exactly one call.
+
+### The gate — one call, immediately before the merge
+
+Every merge-blocking fact in a single GraphQL reading, so no two of them are separated
+in time, plus the workspace head, reduced to one verdict:
 
 ```bash
-gh pr merge <N> --repo <owner>/<repo> --squash
+GATE=$(gh api graphql -f query='
+query($owner:String!, $repo:String!, $n:Int!) {
+  repository(owner:$owner, name:$repo) {
+    pullRequest(number:$n) {
+      headRefOid state mergeable reviewDecision
+      reviewRequests(first:50){ nodes { requestedReviewer {
+        __typename ... on User { login } ... on Bot { login } } } }
+      latestReviews(first:50){ nodes { author { login } state } }
+      reviewThreads(first:100){ pageInfo { hasNextPage } nodes { isResolved isOutdated } }
+      commits(last:1){ nodes { commit { statusCheckRollup { state contexts(first:100){
+        pageInfo { hasNextPage }
+        nodes { __typename ... on CheckRun { name status conclusion }
+                ... on StatusContext { context state } } } } } } }
+    }
+  }
+}' -F owner=<owner> -F repo=<repo> -F n=<N>)
+LOCAL_HEAD=$(git -C "<workspace>" rev-parse HEAD)
+[ -n "$GATE" ] && [ -n "$LOCAL_HEAD" ] || { echo "GATE: HOLD — empty reading"; exit 1; }
+printf '%s' "$GATE" | jq -r --arg local "$LOCAL_HEAD" '
+  .data.repository.pullRequest as $p
+  | ($p.reviewThreads.nodes | map(select(.isResolved | not))) as $open
+  | ($p.commits.nodes[0].commit.statusCheckRollup.contexts.nodes // []) as $ctx
+  | ($ctx | map(select(
+      (.__typename=="CheckRun"      and (.status != "COMPLETED")) or
+      (.__typename=="StatusContext" and (.state=="PENDING" or .state=="EXPECTED"))))) as $running
+  | ($ctx | map(select(
+      (.__typename=="CheckRun"      and ([.conclusion] | inside(["FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE","STALE"]))) or
+      (.__typename=="StatusContext" and (.state=="FAILURE" or .state=="ERROR"))))) as $failed
+  | ($p.reviewRequests.nodes | map("\(.requestedReviewer.login // "?") [\(.requestedReviewer.__typename)]")) as $pending
+  | ($p.latestReviews.nodes | map(select(.state=="CHANGES_REQUESTED") | .author.login)) as $cr
+  | [ (if $p.headRefOid != $local then "head moved: PR \($p.headRefOid) != workspace \($local)" else empty end),
+      (if $p.state != "OPEN" then "PR state is \($p.state)" else empty end),
+      (if ($open|length) > 0 then "\($open|length) unresolved review thread(s), \(($open|map(select(.isOutdated))|length)) of them outdated" else empty end),
+      (if $p.reviewThreads.pageInfo.hasNextPage then "more than 100 review threads — paginate before trusting the count" else empty end),
+      (if ($running|length) > 0 then "checks still running: \($running|map(.name // .context)|join(", "))" else empty end),
+      (if ($ctx|length) == 0 then "zero checks reported — establish whether this repo has CI" else empty end),
+      (if $p.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo.hasNextPage then "more than 100 checks — paginate" else empty end),
+      (if ($failed|length) > 0 then "checks failed: \($failed|map(.name // .context)|join(", "))" else empty end),
+      (if ($pending|length) > 0 then "review still requested from: \($pending|join(", ")) — reviewDecision=\($p.reviewDecision // "none")" else empty end),
+      (if ($cr|length) > 0 then "CHANGES_REQUESTED standing from: \($cr|join(", "))" else empty end),
+      (if $p.mergeable == "CONFLICTING" then "mergeable=CONFLICTING" else empty end),
+      (if $p.mergeable == "UNKNOWN" then "mergeable=UNKNOWN — re-query" else empty end)
+    ] as $blocks
+  | if ($blocks|length) == 0
+    then "GATE: CLEAR — merge \($p.headRefOid) in the very next call"
+    else "GATE: HOLD\n" + ($blocks | map("  - " + .) | join("\n")) end'
 ```
+
+`<owner>`, `<repo>`, `<N>` and `<workspace>` are the literals Step 0 resolved — the
+same rule as everywhere else in this skill: no shell variable survives to the next
+call, and `--repo ""` / `-C ""` fall back to cwd without erroring, which is why the
+block refuses an empty reading before it compares anything.
+
+The head comparison inside the gate **is** Step 0's assertion, folded in so that the
+SHA and the review state come from one instant rather than two. That is the point of
+one call: a green-checks reading from 14:02 and a threads reading from 14:05 describe
+two different pull requests, and neither describes the one you are about to merge.
+
+### What a HOLD means
+
+| Verdict line | What actually happened | Action |
+|---|---|---|
+| `unresolved review thread(s)` | Someone left findings and nobody answered them — including findings that landed **after** the last time anything looked. Outdated threads count: GitHub does not resolve them for you, and a thread going stale is not a thread being addressed. | **Stop.** Hand back to `review-pr-findings`. Never resolve a thread to clear the gate. |
+| `checks still running` | CI is not finished. Some review agents (Copilot review among them) surface as a check run while they work. | Wait, then re-run **the whole gate**, not the one line that was red. |
+| `review still requested from … [Bot]` | A review agent was asked and has not submitted. This is precisely the "still thinking" state, and its findings arrive as new threads the moment it finishes. | Wait for it to submit, then re-run the whole gate — the new threads show up in the same reading. |
+| `review still requested from … [User]`, `reviewDecision=APPROVED` | A human request that someone else's approval already satisfied. Unlike a bot, it can sit unanswered for days, so waiting it out is not a plan. | **Stop and report it** — name the reviewer and say the PR is otherwise clear. Removing someone's review request is the caller's call, not this skill's. |
+| `review still requested from … [User]`, not approved | A human was asked and has not answered. | **Stop and report.** Nothing here approves on their behalf. |
+| `CHANGES_REQUESTED standing from …` | A reviewer's blocking review has not been superseded. | **Stop.** Only a new review from that reviewer clears it; your own assessment does not. |
+| `head moved` | Either the wrong repository or a push landed mid-run. Both are stop conditions — see Step 0. | **Stop.** |
+| `zero checks reported` | "No checks failed" and "no checks ran" read identically. | Establish which, as in Step 1. |
+| `PR state is …` | `MERGED` → Step 0's fast path. `CLOSED` → stop, nothing merges. | Per Step 0. |
+| `mergeable=CONFLICTING` / `UNKNOWN` | Step 2's territory, or GitHub is still computing it. | Return to Step 2, or re-query. |
+| `more than 100 …` | The reading is truncated, so the count cannot be trusted. | Paginate before deciding. Truncated is never CLEAR. |
+| `empty reading` | A lookup failed, or a placeholder was never substituted. | **Stop.** Empty is not a pass. |
+
+**Waiting is a real outcome, not a failure.** A review agent that has not finished is
+the most common HOLD here and the one that caused this step to exist: the merge went
+in while the agent was still working, and its findings arrived minutes later against a
+merged PR. Wait with whatever the harness provides (a monitor/wait mechanism, or a
+short sleep), re-run the gate, and repeat — but bound it. If it has not settled after
+roughly ten minutes of polling, stop and report what is still pending: this skill runs
+in a forked subagent and cannot ask the user whether to keep waiting.
+
+### The freshness rule
+
+A `CLEAR` is valid for exactly **one** call: the `gh pr merge` below, issued next,
+with nothing in between. Anything at all in between voids it — a push, a comment, a
+thread reply, a wait, another poll, a user turn, any other tool call. Void means
+**re-run the gate block verbatim**, not re-read its output.
+
+Three shapes of this mistake, all of which look like diligence:
+
+- Running the gate, reporting "green, no unresolved threads" to the user, waiting for
+  them to say "merge it", and then merging on that report. The instruction to merge
+  **starts** the gate; it does not confirm one.
+- Running the gate, hitting a HOLD, waiting for the checks, and then merging because
+  the checks are now done — without re-reading the threads. The wait is exactly when
+  new findings land.
+- Treating ship's Step 6 approval loop, or `review-pr-findings` returning "all
+  resolved", as the gate. Those are upstream evidence that this PR was ready; this
+  gate is the only reading contemporaneous with the merge.
+
+### The merge
+
+Carry the SHA the gate cleared into the merge, so GitHub itself refuses if the head
+moved between the two calls:
+
+```bash
+gh pr merge <N> --repo <owner>/<repo> --squash --match-head-commit <the SHA the gate printed>
+```
+
+The SHA is a literal copied from the `GATE: CLEAR` line — the one value that may cross
+a call boundary as text, because it is hex and because carrying it is the check. If
+you cannot point at a `GATE: CLEAR` line from the immediately preceding call, you do
+not have a SHA to paste, and that is the gate working.
 
 Do **not** pass `--delete-branch`. merge-pr usually runs from inside the PR's
 worktree (the default for `work-on` tickets), and `--delete-branch` makes gh
@@ -408,7 +547,8 @@ touches the local checkout.
 
 If the user wants to review or edit the squash commit message first, open
 `gh pr view <N> --repo <owner>/<repo> --web` and let them complete the merge manually
-(still without `--delete-branch`).
+(still without `--delete-branch`). Run the gate first anyway: a merge done by hand
+needs the same reading, and a HOLD is a reason not to open the page at all.
 
 Confirm the merge landed on the PR you targeted before cleaning anything up:
 
@@ -591,8 +731,13 @@ confident wrong one. A report that says only "merged PR 58" is unfalsifiable:
 
 ```text
 merged <owner>/<repo>#<N> — squash <sha>, branch <branch> torn down, <KEY> → Done
+gate: CLEAR at <head SHA> (threads 0 unresolved, checks green, no reviewer pending)
 main working tree: <path>
 ```
+
+The gate line is part of the report for the same reason the target is: it is the
+difference between "it was fine when I looked" and "it was fine when I merged". If a
+run waited on a review agent or re-ran the gate, say how many times and on what.
 
 The main working tree is reported because the caller may be standing inside the
 worktree this skill just deleted, and a process whose cwd no longer exists cannot run
@@ -603,6 +748,11 @@ instead of asking a bare `git worktree list` from a directory that is gone.
 
 | Situation | Action |
 |---|---|
+| Step 3's gate says `HOLD` | **Stop or wait**, per the reason. Never merge on an earlier `CLEAR`, and never on a summary of one. |
+| The gate said `CLEAR`, but anything happened before the merge call | The `CLEAR` is void. Re-run the gate block verbatim — a reading is good for exactly one call. |
+| Unresolved review threads at merge time | **Stop.** Hand back to `review-pr-findings`. Resolving threads to clear the gate is falsifying the gate. |
+| A reviewer (human or review agent) has been requested and not submitted | Wait and re-run the whole gate; its findings become threads when it lands. Bound the wait (~10 min), then stop and report — this skill cannot ask. |
+| `gh pr merge` rejects the `--match-head-commit` SHA | The head moved between gate and merge. Do **not** re-run without the flag. Re-run the gate; the new reading is the answer. |
 | Head SHA mismatch (Step 0) | **Stop.** Report both SHAs and the resolved repo/workspace. Never merge past this. |
 | Either head reads empty (Step 0) | **Stop.** An empty `--repo`/`-C` silently falls back to cwd; empty is never a match. Fix the resolution, do not retry past it. |
 | The repository resolves empty | **Stop.** The workspace has no `origin`, or the workspace path is wrong. Do not continue with an empty `--repo`. |
@@ -664,6 +814,21 @@ instead of asking a bare `git worktree list` from a directory that is gone.
 - **Merging without the head-SHA assertion against current values** → `--repo` is only
   as good as whatever resolved it. The assertion is the only check that fails closed
   on a wrong repository, and the only one that catches a push landing mid-run.
+- **Merging on a reading taken before the instruction to merge arrived** → "I checked
+  the threads a few minutes ago" is a statement about a PR that no longer exists. The
+  instruction to merge *starts* Step 3's gate; it never confirms one already run.
+- **Reporting the gate to the user, getting "merge it", and merging on the report** →
+  the user's answer is the thing that makes the reading stale. Re-run it.
+- **Clearing a HOLD one line at a time** → waiting out the running checks and then
+  merging without re-reading the threads misses exactly the findings that landed
+  *during* the wait. The gate is re-run whole or not at all.
+- **Treating a still-running review agent as "no findings"** → a requested reviewer
+  that has not submitted is mid-run, not silent. Its findings arrive as threads
+  minutes later, and after a merge there is nowhere for them to go.
+- **Resolving a review thread so the gate goes green** → that is not passing the gate,
+  it is disabling it. Threads are answered in `review-pr-findings` or not at all.
+- **Dropping `--match-head-commit` because the merge was rejected** → the rejection is
+  the check firing. Re-run the gate instead of removing the guard that caught it.
 - **Reading zero CI checks as green** → "no checks failed" and "no checks ran" read
   identically; one of them is a wrong PR.
 - **Re-deriving the workspace with a bare `git worktree list` after Step 0** → that

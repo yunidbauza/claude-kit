@@ -88,7 +88,7 @@ Six skills covering the Jira-ticket → PR → merge lifecycle. They chain end t
 | `/workstream:goal-on <prompt>` | Ad-hoc entry point for work with no ticket: rewrite a vague request into a Task/Scope/Constraints/Outcome/Stop-Rules brief, then drive it to a verified finish |
 | `/workstream:ship [PR] [--auto-merge]` | PR endgame: CI watch → self code review → findings triage loop → watch-until-approved with base-branch sync → merge |
 | `/workstream:review-pr-findings [PR]` | Adversarial triage of all PR feedback against a persistent per-PR ledger; loops until CI is green with no unresolved threads |
-| `/workstream:merge-pr [PR]` | Squash merge, worktree/branch teardown, default-branch pull, Jira ticket → Done |
+| `/workstream:merge-pr [PR]` | Merge-time gate (threads, checks, pending reviewers, head SHA — all re-read in the call before merging), squash merge, worktree/branch teardown, default-branch pull, Jira ticket → Done |
 | `/workstream:spec-deviation` | Propagate a mid-work spec change to the PR, the ticket, and affected downstream tickets |
 
 ```text
@@ -112,6 +112,8 @@ superpowers: brainstorm → plan → implement → PR created
       ▼
 /workstream:merge-pr [PR]
       │  upstream sync + conflict resolution (confirm if breaking)
+      │  ⛔ merge gate, re-read in the call before merging: unresolved threads ·
+      │     running checks · reviewers still working · head SHA
       │  squash merge · worktree/branch teardown · default-branch pull
       └─ Jira ticket → Done
 

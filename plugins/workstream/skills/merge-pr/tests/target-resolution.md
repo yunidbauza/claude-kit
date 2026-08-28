@@ -2,7 +2,8 @@
 
 Representative cases for checking that `merge-pr` Step 0 resolves the right
 **repository, PR number and workspace** — or refuses to act. Re-run these by hand
-after editing Step 0, Step 3, Step 4, or the red flags. No runner executes these; the
+after editing Step 0, Step 3, Step 4, or the red flags. Step 3's merge-time gate has
+its own cases in `merge-gate.md`. No runner executes these; the
 check is reading the skill against each row and confirming it lands on the stated
 action.
 
@@ -28,7 +29,7 @@ whatever directory the subagent happened to start in.
 | 7 | Workspace path has no `origin` remote (or the path is wrong) | **Stop** at the `[ -n "$REPO" ]` guard. | `gh --repo ""` does not error — it resolves from cwd, silently restoring the bug. |
 | 8 | PR head SHA is `612ed9c`, workspace `HEAD` is `a15e473` | **Stop** before Step 3. Report both SHAs and the resolved repo/workspace. | Either the wrong repository (two repos cannot share a head SHA) or a push landed mid-run. Both are stop conditions. |
 | 9 | `gh pr view --json headRefOid` returns empty and `git rev-parse HEAD` returns empty | **Stop.** Empty is never a match. | `[ "" != "" ]` is false — without the emptiness check the guard fails *open* on exactly the input most likely to be wrong. |
-| 10 | Step 2 merges `origin/main` and pushes, then Step 3 | Re-run the assertion first. | The push moved both heads; a stale comparison proves nothing. |
+| 10 | Step 2 merges `origin/main` and pushes, then Step 3 | Step 3's gate performs the comparison against current values. | The push moved both heads; a stale comparison proves nothing. See `merge-gate.md`. |
 | 11 | PR is `MERGED` with a non-null `mergedAt`, workspace already back on `main` | Skip Steps 1–3, **do not** run the head-SHA assertion, run teardown and Step 5. | The assertion gates Step 3 only. Applying it here would abort the bookkeeping re-run this path exists to allow. |
 | 12 | Same as 11, but the workspace holds neither the branch nor its worktree | Skip teardown entirely and say so. Still run Step 5. | Step 4's own branch check is what guards teardown in place of the assertion. Never delete a branch from a workspace that does not hold it. |
 | 13 | `gh pr checks 58 --repo <owner>/<repo>` returns zero checks | **Not green.** Establish whether the repo has any workflows before proceeding. | "No checks failed" and "no checks ran" read identically; one of them is a wrong PR. |
@@ -53,7 +54,9 @@ whatever directory the subagent happened to start in.
   survive between calls in this harness, so a `$REPO` set in Step 0 arrives at Step 3
   as `--repo ""` — indistinguishable from a value that resolved to the wrong thing,
   and with the same consequence.
-- **The head-SHA assertion gates Step 3 only** (cases 8–11). Teardown is gated by
+- **The head-SHA assertion gates Step 3 only** (cases 8–11), and Step 3's gate is
+  where it actually runs — folded into one reading with the review threads and the
+  checks (`merge-gate.md`). Step 0's standalone run is pre-flight. Teardown is gated by
   Step 4's own branch check instead (case 12).
 - **Every stop leaves the PR unmerged and the ticket untouched.** No case in this
   file resolves ambiguity by picking a side.

@@ -20,6 +20,8 @@ superpowers: brainstorming → writing-plans → implementation → PR
    ▼
 /workstream:merge-pr [PR]
       upstream sync + conflict resolution (confirm if breaking) →
+      merge gate re-read in the call before merging (unresolved threads, running
+        checks, reviewers still working, head SHA) →
       squash merge → worktree/branch cleanup → default-branch pull → Jira ticket Done
 ```
 
@@ -31,7 +33,7 @@ Standalone entry points:
 | `/workstream:goal-on <prompt>` | Starting ad-hoc work from a vague request rather than a ticket. |
 | `/workstream:ship [PR]` | A PR exists and should be driven to merge. |
 | `/workstream:review-pr-findings [PR]` | A PR has feedback to triage, outside the ship flow. |
-| `/workstream:merge-pr [PR]` | The PR is approved and green; just merge + clean up. |
+| `/workstream:merge-pr [PR]` | The PR is approved and green; re-verify at merge time, merge + clean up. |
 | `/workstream:spec-deviation` | Implementation diverged from the ticket spec. |
 
 ## Prerequisites
@@ -47,6 +49,10 @@ Standalone entry points:
 - **One repo per PR.** A ticket may produce several PRs (e.g. backend + frontend);
   each gets its own work-on worktree, ship run, and merge.
 - **Squash merge only** — one clean commit on the default branch per PR.
+- **Merge blockers are re-read at the moment of merging**, never carried from an
+  earlier step. Threads, checks, pending reviewers and the head SHA come from one
+  reading taken in the call before `gh pr merge`; an approval loop's last look, or the
+  same check run before the user said "merge it", is evidence and not authorisation.
 - **Worktrees by default** — work-on isolates every ticket in its own worktree so
   concurrent sessions can't corrupt each other's refs.
 - **Branch names carry the ticket key** (`feat/proj-123-slug` or the sanitized

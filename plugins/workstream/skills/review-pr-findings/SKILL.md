@@ -180,6 +180,12 @@ Re-run Step 1. New findings triggered by the push go through the same ledger. Wh
 CI is green and no unresolved threads remain, post ONE short summary comment (2–4
 sentences: what was fixed, what was rejected and why), then report completion.
 
+**"All resolved" describes the moment this skill finished, not the merge.** Report it
+as such: a reviewer can add a thread, and a review agent that was still running can
+post its findings, in the time between this report and `gh pr merge`. `merge-pr`
+Step 3 re-reads all of it in the call before it merges — never hand it, or the user,
+a completion report phrased as clearance to skip that.
+
 ## Red flags
 
 - Fixing a finding without a verdict recorded → stop, assess first.
@@ -190,3 +196,5 @@ sentences: what was fixed, what was rejected and why), then report completion.
   browser; those checks miss render/interaction/ARIA regressions.
 - Pushing fixes one finding at a time — batch the whole round into a single push.
 - Long approval essay → short notes, always.
+- Reporting "all threads resolved" as if it authorised a merge — it is a reading with
+  a timestamp, and `merge-pr`'s gate is the one taken at merge time.

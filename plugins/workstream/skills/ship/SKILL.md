@@ -332,6 +332,14 @@ the ledger and PR state make resumption idempotent). On each wake:
 3. **Approved?** `gh pr view <N> --repo <owner>/<repo> --json reviewDecision` — on
    `APPROVED` with green CI and no unresolved threads, proceed to Step 7.
 
+**This loop's readings expire, and they are not the merge gate.** They tell you when
+it is worth *asking* to merge. What authorises the merge is `merge-pr` Step 3's gate,
+taken in the call before `gh pr merge` — because between this wake, the user's answer
+in Step 7, and the merge itself, a reviewer can submit findings and a review agent that
+was still running can finish. Never hand `merge-pr` a "already verified, skip the
+checks" instruction, and never merge here yourself on the strength of a reading taken
+in this loop.
+
 ## Step 7 — Merge (the ONE user checkpoint)
 
 - Ask the user once: "green + reviewed + approved — merge PR <N>?" Skip the question
@@ -382,6 +390,12 @@ the ledger and PR state make resumption idempotent). On each wake:
 - Marking a UI change ready or "verified" on green lint/tests/type-check alone —
   drive it in a browser first; those checks miss render/interaction/ARIA regressions.
 - Merging while behind the base branch or with unresolved threads.
+- Treating this loop's last reading — or `review-pr-findings` returning "all resolved"
+  — as the merge gate. Both are upstream evidence that the PR *was* ready. The only
+  reading that authorises a merge is the one `merge-pr` takes in the call immediately
+  before it merges.
+- Asking the user "merge?" on a fresh reading and then merging on it after they
+  answer. Their answer is what makes it stale.
 - Waiting for a human PR approval while auto-merge is active — there, CI green +
   all findings resolved IS the approval signal.
 - Treating auto-merge as permission to skip Steps 2–5 — it only skips the approval
