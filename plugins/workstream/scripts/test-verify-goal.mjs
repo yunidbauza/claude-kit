@@ -16,6 +16,7 @@ import {
   emitFor,
   resolveBrief,
   prVerdict,
+  hasBranchRef,
   section,
   checkboxItems,
   hasEvidence,
@@ -484,4 +485,38 @@ test('the PR gate is the last gate, not the first', () => {
   const md = brief({ outcome: '- [ ] not done\n' });
   const r = decide(md, { checkPr: () => assert.fail('unchecked items must short-circuit first') });
   assert.equal(r.action, 'block');
+});
+
+// --- one stale PR must not mask a live one -----------------------------------
+
+test('any qualifying PR on the branch is proof, not just the first row', () => {
+  // A branch can carry several PRs: a merged one, then a closed follow-up. Judging
+  // whichever row came back first would report "no PR" with a merged one right there,
+  // and block every turn until the budget was spent.
+  const rows = [
+    { state: 'CLOSED', headRefName: 'goal/x' },
+    { state: 'MERGED', headRefName: 'goal/x' },
+  ];
+  assert.equal(prVerdict('goal/x', JSON.stringify(rows)), 'match');
+  assert.equal(prVerdict('goal/x', JSON.stringify(rows.reverse())), 'match');
+});
+
+test('rows for other branches never satisfy the check', () => {
+  const rows = [
+    { state: 'OPEN', headRefName: 'goal/other' },
+    { state: 'CLOSED', headRefName: 'goal/x' },
+  ];
+  assert.equal(prVerdict('goal/x', JSON.stringify(rows)), 'mismatch');
+});
+
+// --- and the check refuses to answer about the wrong repository --------------
+
+test('the branch ref is what proves we are standing in the right repository', () => {
+  // `gh pr list` resolves its repo from cwd, so a lookup run from an unrelated repo
+  // returns a confident empty list — identical to "the PR was never raised". The
+  // local branch ref is the tell, and its absence downgrades the verdict to unknown.
+  const here = new URL('../../..', import.meta.url).pathname;
+  assert.equal(hasBranchRef(here, 'main'), true);
+  assert.equal(hasBranchRef(here, 'no-such-branch-2f9a'), false);
+  assert.equal(hasBranchRef(mkdtempSync(join(tmpdir(), 'not-a-repo-')), 'main'), false);
 });

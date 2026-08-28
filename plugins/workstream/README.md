@@ -96,7 +96,14 @@ Two deliberate asymmetries with false success, in both directions:
   plausible-looking one, so **ticking a checkbox is what marks an item done** — don't
   tick one before its evidence is in the brief. What it *can* check without trusting
   anyone is the PR: on `route: code` it runs `gh pr list --head <branch>` and refuses
-  `DONE` unless a real open (or merged) PR is there.
+  `DONE` unless a real open (or merged) PR is there. That check runs `gh` from the
+  brief's `repo:`/`worktree:` path (absolute only) or the session cwd, and declines to
+  answer at all — `unknown`, which releases the turn — when the branch is not a ref in
+  that repository, since a lookup in the wrong repo returns a confident empty list.
+
+`DONE` is written by the verifier, never by the model: a status the model writes is
+terminal, and the next verifier run would return at it without checking anything. The
+model ticks boxes and records evidence; something else decides they add up.
 
 Everything else degrades cleanly: worktree isolation uses the native tool in Claude
 Code and plain `git worktree` elsewhere, and `AskUserQuestion` falls back to a plain

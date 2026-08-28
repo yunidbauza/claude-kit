@@ -44,8 +44,12 @@ hooks:
                but it is no longer your problem to compensate for: the floor has the
                session covered either way. (A brief written under a drifted filename
                also lands here; the command hook resolves those by header identity.)
-            3. Return ok:true unless `status` is ACTIVE. Every other status is either
-               settled or waiting on the user.
+            3. Return ok:true unless `status` is ACTIVE or DONE. Every other status
+               is settled or waiting on the user. DONE is in that list for one
+               reason: the two hooks run concurrently, and on the decisive turn —
+               the one where the last box gets ticked — the floor writes DONE while
+               you are reading. Skipping DONE would mean skipping the only turn you
+               exist for, at random.
             4. Read `## Outcome` and `## Verification evidence`. For each TICKED item,
                ask the one question a script cannot: does the recorded evidence
                actually support it?
@@ -57,7 +61,11 @@ hooks:
                  evidence.
             5. Every ticked item genuinely supported -> ok:true.
             6. Otherwise -> ok:false, naming the SPECIFIC items whose evidence does
-               not hold and the single next concrete action.
+               not hold and the single next concrete action. **If the brief already
+               says DONE, your reason MUST also instruct the model to set
+               `status: ACTIVE` before continuing** — you cannot write it yourself,
+               and until it is ACTIVE again the floor sees a terminal status and
+               enforces nothing.
 
             Hard rules:
             - IGNORE `stop_hook_active`. `turn_budget` is the loop guard, and the
@@ -111,6 +119,8 @@ session: 3f9c1e04-...        # this session's id — the brief's identity if the
 last_verified: 2026-07-27T14:31:02Z   # written by the verifier, never by you
 branch: goal/widget-cache   # code route only
 workspace: worktree        # code route only — "current" (in place) or "worktree" (isolation-guarded / background session)
+repo: /abs/path/to/repo    # code route — REQUIRED when the work is not in the session's own cwd
+worktree: /abs/path/to/wt  # code route — the worktree path, when workspace is "worktree"
 ---
 
 ## Task
@@ -240,7 +250,8 @@ treats absent evidence as unmet — unrecorded work does not count as done.
 ### Route: artifact
 
 Do the work to completion. Verify it — open the file, run the script, confirm the
-Jira issue actually changed. Append the evidence. Write `status: DONE`.
+Jira issue actually changed. Append the evidence and tick the Outcome items. The
+verifier writes `status: DONE`; you do not (see the code route's step 9).
 
 ### Route: code
 
@@ -265,8 +276,15 @@ DEFAULT=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name')
      tool and falls back to `git worktree add`), branch `goal/<slug>` off
      `origin/$DEFAULT` inside it, and do all Phase 2 work there.
 
-Record the branch name — and the worktree path, if any — in the brief header. The
-workspace was chosen in Phase 1; Phase 2 is autonomous and cannot pause to switch.
+Record the branch name in the header's `branch:`, and the absolute path of the
+checkout you are working in as `repo:` (plus `worktree:` when you made one). Those
+keys are not decoration: the verifier's PR check runs `gh` from that directory, and
+`gh` resolves the repository from wherever it is standing. A cross-repo goal whose
+brief omits them sends the check into the session's own repo, where it finds no PR.
+Absolute paths only — a bare repo name resolves against cwd and is ignored.
+
+The workspace was chosen in Phase 1; Phase 2 is autonomous and cannot pause to
+switch.
 
 4. Implement. Multiple files are expected and fine.
 5. Verify with the repo's own checks — discover them from `CLAUDE.md`,
@@ -277,7 +295,12 @@ workspace was chosen in Phase 1; Phase 2 is autonomous and cannot pause to switc
 7. `gh pr create --draft`
 8. Invoke the `workstream:ship` skill with the PR number, and record the handoff in
    the evidence section.
-9. Write `status: DONE`.
+9. Tick the Outcome items whose evidence is now recorded — and **do not write
+   `status: DONE` yourself.** The verifier writes it, once it has confirmed the boxes,
+   the evidence, and (on this route) a real PR on the branch. Writing it yourself
+   makes the brief terminal, and the next verifier run stops at the status and never
+   reaches those checks — you would be marking your own homework and skipping the one
+   check that needs no trust.
 
 **The goal is met at draft PR raised plus ship handed off.** `ship` owns CI,
 findings triage, approval, and the merge checkpoint. `goal-on` does not wait for the
@@ -351,14 +374,18 @@ spells it `"$CLAUDE_PLUGIN_ROOT/scripts/verify-goal.mjs"` and lets the shell exp
 
 ## Terminal states
 
-Self-clearing is the normal path. Write the terminal status yourself; do not wait to
-be asked.
+Self-clearing is the normal path. `FAILED`, `NEEDS-DECISION` and `CLEARED` you write
+yourself; do not wait to be asked. **`DONE` is the exception — the verifier writes
+it**, so that a completed goal is a thing something else confirmed rather than a thing
+you declared. The one case where you write it is degraded mode: if Phase 2's first act
+found no `last_verified`, no verifier is running, and you must set the terminal status
+yourself and say plainly that you did.
 
 | Status | When | Then |
 |---|---|---|
 | `PENDING-APPROVAL` | Phase 1 wrote the brief; user has not approved | Verifier releases the turn. Not terminal — flip to `ACTIVE` on approval. |
 | `ACTIVE` | Phase 2 running | Verifier enforces the Outcome. |
-| `DONE` | Outcome verified | Report what was produced. |
+| `DONE` | Outcome verified — **written by the verifier**, not by you | Report what was produced. |
 | `FAILED` | Budget spent, or an unresolvable dependency conflict | Report what was achieved and the exact remaining gap. Never fail silently. |
 | `NEEDS-DECISION` | An unforeseen decision blocks progress | The verifier releases the turn so the user can be asked. Resolve, set `ACTIVE`, continue. |
 | `CLEARED` | User abandons the goal | Set it on request — no command syntax needed. |
@@ -390,6 +417,12 @@ carry a `skillRoot`, which this one does.
 - Starting Phase 2 without looking for `last_verified` → a verifier that never ran is
   invisible in every other way, and the whole point of this skill is that something
   other than your own judgement is holding the Outcome.
+- Writing `status: DONE` yourself → the status is terminal, so the next verifier run
+  returns at it and never checks the boxes, the evidence, or the PR. Tick the boxes,
+  record the evidence, and let the verifier settle it.
+- Omitting `repo:` from a code-route brief whose work is not in the session's cwd →
+  the PR check runs `gh` in the wrong repository, finds nothing, and blocks every turn
+  until the budget is spent.
 - Writing the brief anywhere but `<session-id>.md`, or omitting the `session:` header
   → a brief the verifier cannot resolve reads as "no goal here", and it releases every
   turn without a word.

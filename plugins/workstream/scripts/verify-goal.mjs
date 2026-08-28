@@ -36,7 +36,7 @@
 import { readFileSync, writeFileSync, existsSync, renameSync, realpathSync, readdirSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const TERMINAL = new Set([
@@ -247,9 +247,35 @@ export function prVerdict(branch, stdout) {
     return 'unknown';
   }
   if (!Array.isArray(rows)) return 'unknown';
-  const hit = rows.find((r) => r?.headRefName === branch);
-  if (!hit) return 'mismatch';
-  return hit.state === 'OPEN' || hit.state === 'MERGED' ? 'match' : 'mismatch';
+  // ANY qualifying row is proof, not the first one that happens to match the branch.
+  // A branch can carry several PRs — say a merged one and a later closed follow-up —
+  // and picking whichever `find` lands on first would report 'mismatch' with a merged
+  // PR sitting right there, blocking every turn until the budget is spent.
+  return rows.some((r) => r?.headRefName === branch && (r.state === 'OPEN' || r.state === 'MERGED'))
+    ? 'match'
+    : 'mismatch';
+}
+
+/**
+ * Is `branch` a ref in the repository at `dir`?
+ *
+ * The guard against answering about the wrong repository. `gh pr list` resolves its
+ * repo from the working directory, so a session started in repo A whose work lives in
+ * repo B gets a confident empty list — indistinguishable from "the PR was never
+ * raised", which would block every turn and drive a finished brief to FAILED. The
+ * branch ref is the cheap local tell: it exists in the repo the work happened in
+ * (worktree branches share the ref namespace) and not in an unrelated one.
+ */
+export function hasBranchRef(dir, branch) {
+  try {
+    const r = spawnSync('git', ['-C', dir, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], {
+      encoding: 'utf8',
+      timeout: GH_TIMEOUT_MS,
+    });
+    return !r.error && r.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -262,20 +288,30 @@ export function ghPrCheck(header, cwd) {
   if (!branch || /^TBD/i.test(branch)) return 'unknown';
 
   // The brief may name the repo it actually worked in; the session cwd is the fallback.
+  // Absolute directories only: a bare `repo: incorpx-server` slug would otherwise
+  // resolve against cwd and quietly interrogate an unrelated checkout.
   let dir = cwd;
   for (const key of ['worktree', 'repo']) {
     const p = headerValue(header, key);
-    if (p && existsSync(p)) {
-      dir = p;
-      break;
+    try {
+      if (p && isAbsolute(p) && statSync(p).isDirectory()) {
+        dir = p;
+        break;
+      }
+    } catch {
+      /* a header pointing at a path that no longer exists is not a reason to stop */
     }
   }
+
+  // Standing in the wrong repository produces a confident, wrong 'mismatch'. Refuse to
+  // answer instead: 'unknown' releases the turn without claiming anything either way.
+  if (!hasBranchRef(dir, branch)) return 'unknown';
 
   let stdout = null;
   try {
     const r = spawnSync(
       'gh',
-      ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,isDraft,headRefName', '--limit', '5'],
+      ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,isDraft,headRefName', '--limit', '30'],
       { cwd: dir, encoding: 'utf8', timeout: GH_TIMEOUT_MS },
     );
     if (!r.error && r.status === 0) stdout = r.stdout;
