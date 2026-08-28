@@ -7,6 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -515,8 +516,17 @@ test('the branch ref is what proves we are standing in the right repository', ()
   // `gh pr list` resolves its repo from cwd, so a lookup run from an unrelated repo
   // returns a confident empty list — identical to "the PR was never raised". The
   // local branch ref is the tell, and its absence downgrades the verdict to unknown.
-  const here = new URL('../../..', import.meta.url).pathname;
-  assert.equal(hasBranchRef(here, 'main'), true);
-  assert.equal(hasBranchRef(here, 'no-such-branch-2f9a'), false);
-  assert.equal(hasBranchRef(mkdtempSync(join(tmpdir(), 'not-a-repo-')), 'main'), false);
+  //
+  // Built here rather than asserted against this checkout: CI checks out a detached
+  // HEAD, so `refs/heads/main` does not exist on the runner. A test that reads its
+  // own environment tests the environment.
+  const repo = mkdtempSync(join(tmpdir(), 'goal-on-repo-'));
+  const git = (...args) => spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  git('-c', 'user.email=t@example.invalid', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'x');
+  git('checkout', '-q', '-b', 'probe-branch');
+
+  assert.equal(hasBranchRef(repo, 'probe-branch'), true);
+  assert.equal(hasBranchRef(repo, 'no-such-branch-2f9a'), false, 'a branch this repo never had');
+  assert.equal(hasBranchRef(mkdtempSync(join(tmpdir(), 'not-a-repo-')), 'probe-branch'), false, 'not a repo at all');
 });
