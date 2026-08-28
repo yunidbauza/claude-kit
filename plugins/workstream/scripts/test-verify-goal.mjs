@@ -6,9 +6,16 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   decide,
+  harnessOf,
+  emitFor,
+  resolveBrief,
+  prVerdict,
   section,
   checkboxItems,
   hasEvidence,
@@ -101,8 +108,9 @@ test('blocking increments turns_used in the written header', () => {
 // --- completion --------------------------------------------------------------
 
 test('all checked plus real evidence releases and writes DONE', () => {
+  // route: code, so the PR gate is part of the claim — say what it found.
   const md = brief({ outcome: '- [x] a\n- [x] b\n', evidence: '$ pnpm test\n12 passed\n' });
-  const r = decide(md);
+  const r = decide(md, { checkPr: () => 'match' });
   assert.equal(r.action, 'allow');
   assert.match(r.write, /^status: DONE$/m);
 });
@@ -331,4 +339,149 @@ test('stamping leaves the body untouched', () => {
   const bodyOf = (text) => text.slice(text.indexOf('---', 4) + 3);
 
   assert.equal(bodyOf(r.write), bodyOf(md));
+});
+
+// --- harness contracts -------------------------------------------------------
+
+// Claude Code's `Stop` and Copilot's `agentStop` want different JSON. Getting this
+// wrong is invisible: an unrecognised shape reads as "release the turn", which is
+// precisely the silent non-enforcement this verifier exists to prevent.
+
+test('the harness is declared by the hook command, never guessed', () => {
+  assert.equal(harnessOf(['--harness=claude']), 'claude');
+  assert.equal(harnessOf([]), 'copilot');
+  assert.equal(harnessOf(['--something-else']), 'copilot');
+});
+
+test('Claude Code gets its Stop shape: JSON to block, silence to release', () => {
+  assert.deepEqual(JSON.parse(emitFor('claude', 'block', 'because')), {
+    decision: 'block',
+    reason: 'because',
+  });
+  assert.equal(emitFor('claude', 'allow'), '');
+});
+
+test('Copilot keeps its agentStop shape unchanged', () => {
+  assert.deepEqual(JSON.parse(emitFor('copilot', 'allow')), { decision: 'allow' });
+  assert.deepEqual(JSON.parse(emitFor('copilot', 'block', 'because')), {
+    decision: 'block',
+    reason: 'because',
+  });
+});
+
+// --- finding the brief -------------------------------------------------------
+
+// A brief the verifier cannot locate is indistinguishable from no goal at all, and
+// the filename is written by a model. Every drift below was observed in a real
+// ~/.claude/workstream/goal-on directory.
+
+const dirWith = (files) => {
+  const dir = mkdtempSync(join(tmpdir(), 'goal-on-'));
+  for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body, 'utf8');
+  return dir;
+};
+
+test('the documented filename is found first', () => {
+  const dir = dirWith({ 'abc123.md': brief(), 'session_abc123.md': brief() });
+  assert.equal(resolveBrief(dir, 'abc123'), join(dir, 'abc123.md'));
+});
+
+test('the session_ prefixed variant is found', () => {
+  const dir = dirWith({ 'session_abc123.md': brief() });
+  assert.equal(resolveBrief(dir, 'abc123'), join(dir, 'session_abc123.md'));
+});
+
+test('a renamed brief is found by its in-file session identity', () => {
+  const dir = dirWith({
+    'abc123-some-slug.md': '---\nstatus: ACTIVE\nsession: abc123\n---\n\n## Task\n',
+    'unrelated.md': '---\nstatus: ACTIVE\nsession: zzz999\n---\n\n## Task\n',
+  });
+  assert.equal(resolveBrief(dir, 'abc123'), join(dir, 'abc123-some-slug.md'));
+});
+
+test('when several briefs claim the session, the newest wins', () => {
+  const dir = dirWith({
+    'old.md': '---\nstatus: DONE\nsession: abc123\n---\n',
+    'new.md': '---\nstatus: ACTIVE\nsession: abc123\n---\n',
+  });
+  utimesSync(join(dir, 'old.md'), new Date(1e9), new Date(1e9));
+  utimesSync(join(dir, 'new.md'), new Date(2e9), new Date(2e9));
+  assert.equal(resolveBrief(dir, 'abc123'), join(dir, 'new.md'));
+});
+
+test('no brief for this session resolves to null rather than a neighbour', () => {
+  const dir = dirWith({ 'someone-else.md': '---\nstatus: ACTIVE\nsession: zzz999\n---\n' });
+  assert.equal(resolveBrief(dir, 'abc123'), null);
+});
+
+test('a missing brief directory is not an error', () => {
+  assert.equal(resolveBrief(join(tmpdir(), 'goal-on-does-not-exist-9d3f'), 'abc123'), null);
+});
+
+test('a partial id does not match a longer one', () => {
+  const dir = dirWith({ 'x.md': '---\nsession: abc123456\n---\n' });
+  assert.equal(resolveBrief(dir, 'abc123'), null);
+});
+
+// --- the code route's objective check ----------------------------------------
+
+const PR = (rows) => JSON.stringify(rows);
+
+test('an open PR on the brief branch is a match', () => {
+  assert.equal(prVerdict('goal/x', PR([{ state: 'OPEN', isDraft: true, headRefName: 'goal/x' }])), 'match');
+});
+
+test('an already-merged PR still counts — ship marks it ready and merges it', () => {
+  assert.equal(prVerdict('goal/x', PR([{ state: 'MERGED', isDraft: false, headRefName: 'goal/x' }])), 'match');
+  // isDraft is deliberately not required: `ship`'s first move is to mark it ready.
+  assert.equal(prVerdict('goal/x', PR([{ state: 'OPEN', isDraft: false, headRefName: 'goal/x' }])), 'match');
+});
+
+test('a closed PR, or none at all, is a mismatch', () => {
+  assert.equal(prVerdict('goal/x', PR([{ state: 'CLOSED', headRefName: 'goal/x' }])), 'mismatch');
+  assert.equal(prVerdict('goal/x', PR([])), 'mismatch');
+  assert.equal(prVerdict('goal/x', PR([{ state: 'OPEN', headRefName: 'goal/other' }])), 'mismatch');
+});
+
+test('an unusable gh result is unknown, never a mismatch', () => {
+  // 'unknown' releases the turn; 'mismatch' would block it. A missing gh, an
+  // unauthenticated one, or a network failure must never wedge the session.
+  assert.equal(prVerdict('goal/x', null), 'unknown');
+  assert.equal(prVerdict('goal/x', 'not json'), 'unknown');
+  assert.equal(prVerdict('goal/x', '{"not":"an array"}'), 'unknown');
+  assert.equal(prVerdict('', PR([])), 'unknown');
+  assert.equal(prVerdict('TBD — filled in once the ticket exists', PR([])), 'unknown');
+});
+
+test('the code route will not stamp DONE without a PR to point at', () => {
+  const md = brief({ outcome: '- [x] a\n' });
+  const r = decide(md, { checkPr: () => 'mismatch' });
+  assert.equal(r.action, 'block');
+  assert.match(r.reason, /no PR exists on branch "goal\/x"/);
+  assert.match(r.write, /^turns_used: 1$/m, 'a blocked turn spends budget');
+  assert.doesNotMatch(r.write, /^status: DONE$/m);
+});
+
+test('an unverifiable PR check releases the turn but claims nothing', () => {
+  const r = decide(brief({ outcome: '- [x] a\n' }), { checkPr: () => 'unknown' });
+  assert.equal(r.action, 'allow', 'failing open is mandatory');
+  assert.doesNotMatch(r.write, /^status: DONE$/m, 'a check that did not run cannot succeed');
+  assert.match(r.write, /^status: ACTIVE$/m, 'and it must not silently settle the goal either');
+  assert.match(r.write, /^last_verified:/m);
+});
+
+test('the artifact route has no PR gate', () => {
+  const md = brief({ outcome: '- [x] a\n' }).replace('route: code', 'route: artifact');
+  const r = decide(md, {
+    checkPr: () => assert.fail('the PR gate must not run off the code route'),
+  });
+  assert.equal(r.action, 'allow');
+  assert.match(r.write, /^status: DONE$/m);
+});
+
+test('the PR gate is the last gate, not the first', () => {
+  // An unmet Outcome blocks on its own terms; GitHub is never consulted for it.
+  const md = brief({ outcome: '- [ ] not done\n' });
+  const r = decide(md, { checkPr: () => assert.fail('unchecked items must short-circuit first') });
+  assert.equal(r.action, 'block');
 });
