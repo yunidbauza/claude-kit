@@ -162,6 +162,22 @@ for dir in plugins/*/; do
     else
       bad "skill '$sdir' name is lowercase-hyphenated" "got: '$sname'"
     fi
+
+    # An UNBRACED positional token in a skill body is rewritten with the invoking
+    # caller's arguments before the agent ever reads the file — 0-indexed, and inside
+    # code fences and backtick spans exactly as in prose. So `awk '{print $1}'` in a
+    # snippet silently becomes `awk '{print /some/path}'` the moment the skill is
+    # invoked with two arguments, and an out-of-range token is left alone, which is
+    # why it survives testing with fewer args than it takes. Braced `${1}` is passed
+    # through untouched; awk field refs must be avoided or rewritten in shell.
+    body=$(awk '/^---$/{n++; next} n>=2' "$skill")
+    posn=$(printf '%s\n' "$body" | grep -nE '\$[0-9]' | head -3 | tr '\n' ' ')
+    if [ -z "$posn" ]; then
+      ok "skill '$sdir' body has no unbraced positional tokens"
+    else
+      bad "skill '$sdir' body has no unbraced positional tokens" \
+          "argument substitution would rewrite these: $posn"
+    fi
   done
 
   # --------------------------------------------- bundled-launcher invocation ----
