@@ -23,6 +23,51 @@ infer which PR is meant from earlier chat — resolve the target explicitly firs
 
 ## Step 0: Identify the target — repository, PR number, workspace, and the supplied ticket key
 
+### The invocation arguments
+
+**Everything the caller passed arrives here, and nowhere else:**
+
+```text
+arguments: $ARGUMENTS
+```
+
+This block is not a convenience — it is the **only** channel. This skill runs in a
+forked subagent with no conversation history, so there is no user message to re-read
+and no earlier turn to consult: an argument that is not interpolated above did not
+reach this run at all. Read that line *before* forming any belief about what the
+caller supplied.
+
+An **empty** value after `arguments:` means the skill genuinely was invoked with
+none — take the bootstrap row of the table below. A **non-empty** value is the token
+list that §"The supplied ticket key" parses, and the repo-qualified target that the
+rest of this step resolves from.
+
+**There is a third state, and it is not "non-empty".** If the line still reads
+literally `arguments: $ARGUMENTS`, with the token undisturbed, then this harness does
+not interpolate skill bodies at all — **treat it exactly as empty and take the
+bootstrap row.** Never try to parse the token itself as a target: it matches none of
+the four accepted PR forms, and reading it as a supplied argument would deny this run
+the cwd bootstrap it should have fallen back to. Claude Code interpolates; other
+harnesses this plugin supports may not.
+
+Two consequences worth stating, because both have already cost a run:
+
+- **Never report "no arguments were supplied" without quoting that line.** It is
+  cheap to check and it is the difference between a correct cwd bootstrap and one
+  that silently ignored a target the caller named.
+- **An unbraced positional token anywhere in this file is rewritten with the
+  caller's arguments before this agent ever sees it.** Substitution is 0-indexed:
+  the unbraced token — spelled `${0}` throughout this paragraph so that it survives
+  to be read — resolves to the *first* argument, `${1}` to the second. Out-of-range
+  tokens are left as literal text, so the damage depends on how many arguments were
+  passed.
+  Backticks do not protect it; a code span is rewritten exactly like prose. That is
+  why no shell snippet below uses `awk`, whose field references are spelled the same
+  way: a three-argument invocation would splice the PR target into the middle of an
+  awk program. **When editing this file, write positional tokens braced** — the
+  braced form is passed through untouched, which is why the ones in this paragraph
+  survive to be read. Keep the snippets free of them either way.
+
 **A PR number is not an identifier.** `#123` exists in every repository you have ever
 worked in, and `gh` decides which one it means from the **current working
 directory** — which this skill does not control. A forked subagent inherits neither
@@ -263,15 +308,19 @@ that a plausible-looking wrong answer is available at every turn. Cwd is allowed
 
 **A Jira issue key among the arguments** — `merge-pr owner/repo#123 PROJ-456`, or
 `merge-pr owner/repo#123 <workspace> PROJ-456` as `ship` passes it — is the
-**supplied key**: the trusted ticket for Step 5. `ship` passes the key it confirmed
+**supplied key**: the trusted ticket for Step 5. It reaches this run only through the
+`arguments:` line above; if that line is empty, no key was passed, whatever the
+caller intended. `ship` passes the key it confirmed
 in its own Step 3 this way. Record it now; Step 5 is its only consumer.
 
 **Parse it with this algorithm, in this order.** Do not eyeball the argument line and
 judge it as a whole; run the steps.
 
-1. **Split the invocation's arguments into whitespace-separated tokens.** Everything
-   below works token by token. Nothing below ever inspects the argument line as a
-   single string.
+1. **Take the `arguments:` line from §"The invocation arguments" above and split it
+   into whitespace-separated tokens.** That line is the input to this parse — not a
+   memory of what the caller typed, which a forked subagent does not have. Everything
+   below works token by token; nothing below ever inspects the line as a single
+   string.
 2. **Consume the PR target token** — whichever one form the caller used: a bare `<N>`,
    `#<N>`, `<owner>/<repo>#<N>`, or a `https://github.com/<owner>/<repo>/pull/<N>`
    URL. Remove that **one** token from the list.
@@ -613,10 +662,18 @@ DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBran
 [ -n "$BRANCH" ] && [ -n "$DEFAULT" ] || { echo "ABORT: branch/default not resolved"; exit 1; }
 
 # Which checkout holds the branch, and which one is the main working tree?
-MAIN_WT=$(git -C "<workspace>" worktree list --porcelain \
-          | awk '/^worktree /{sub(/^worktree /,""); print; exit}')
-WT_PATH=$(git -C "<workspace>" worktree list --porcelain \
-          | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{p=$0; sub(/^worktree /,"",p)} $0==b{print p; exit}')
+# Parsed with a shell loop, not awk: awk's unbraced field references are rewritten
+# with the caller's arguments before the agent reads this file (see Step 0,
+# "The invocation arguments"). Do not reintroduce awk here.
+WT_LIST=$(git -C "<workspace>" worktree list --porcelain)
+MAIN_WT=""; WT_PATH=""; cur=""
+while IFS= read -r line; do
+  case "$line" in
+    "worktree "*)                cur=${line#worktree }
+                                 [ -n "$MAIN_WT" ] || MAIN_WT=$cur ;;   # first entry is the main working tree
+    "branch refs/heads/$BRANCH") WT_PATH=$cur ;;
+  esac
+done <<< "$WT_LIST"
 [ -n "$MAIN_WT" ] || { echo "ABORT: main working tree not resolved"; exit 1; }
 
 if   [ -z "$WT_PATH" ];              then echo "NEITHER   (no checkout here holds $BRANCH)"
@@ -647,7 +704,7 @@ both directions:
 
 - Crossing a call boundary is still forbidden. A `$BRANCH` set here is empty in Case
   A, and every consequence is quiet: `git branch -D ""` and `git checkout ""` fail,
-  and the `awk` matches `branch refs/heads/` against nothing, so `WT_PATH` comes back
+  and the loop matches `branch refs/heads/` against nothing, so `WT_PATH` comes back
   empty and teardown half-completes while the merge itself looks fine.
 - But **the branch name is attacker-controlled**, and pasting it in as bare text is
   worse than the bug that would fix. `git check-ref-format` permits `;`, `$`,
@@ -677,10 +734,15 @@ BRANCH=$(gh pr view <N> --repo <owner>/<repo> --json headRefName --jq '.headRefN
 DEFAULT=$(gh repo view <owner>/<repo> --json defaultBranchRef --jq '.defaultBranchRef.name')
 [ -n "$BRANCH" ] && [ -n "$DEFAULT" ] || { echo "ABORT: branch/default not resolved"; exit 1; }
 
-MAIN_WT=$(git -C "<workspace>" worktree list --porcelain \
-          | awk '/^worktree /{sub(/^worktree /,""); print; exit}')
-WT_PATH=$(git -C "<workspace>" worktree list --porcelain \
-          | awk -v b="branch refs/heads/$BRANCH" '/^worktree /{p=$0; sub(/^worktree /,"",p)} $0==b{print p; exit}')
+WT_LIST=$(git -C "<workspace>" worktree list --porcelain)
+MAIN_WT=""; WT_PATH=""; cur=""
+while IFS= read -r line; do
+  case "$line" in
+    "worktree "*)                cur=${line#worktree }
+                                 [ -n "$MAIN_WT" ] || MAIN_WT=$cur ;;
+    "branch refs/heads/$BRANCH") WT_PATH=$cur ;;
+  esac
+done <<< "$WT_LIST"
 [ -n "$MAIN_WT" ] && [ -n "$WT_PATH" ] || { echo "ABORT: worktree not resolved"; exit 1; }
 # The detection above already established these differ. Re-assert it: this block is
 # its own call, and `worktree remove` on the main working tree cannot succeed.
