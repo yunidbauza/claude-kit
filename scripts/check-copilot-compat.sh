@@ -170,8 +170,16 @@ for dir in plugins/*/; do
     # invoked with two arguments, and an out-of-range token is left alone, which is
     # why it survives testing with fewer args than it takes. Braced `${1}` is passed
     # through untouched; awk field refs must be avoided or rewritten in shell.
-    body=$(awk '/^---$/{n++; next} n>=2' "$skill")
-    posn=$(printf '%s\n' "$body" | grep -nE '\$[0-9]' | head -3 | tr '\n' ' ')
+    #
+    # Scope: positional tokens only. `$ARGUMENTS` is rewritten by the same mechanism
+    # but is also the ONLY sanctioned way to receive arguments (merge-pr Step 0 uses
+    # it deliberately), so it cannot be banned outright — a snippet that needs a
+    # literal one must be reviewed by hand.
+    #
+    # NR keeps the reported numbers aligned to the real file: counting them against
+    # the frontmatter-stripped body would point a maintainer at the wrong line.
+    posn=$(awk '/^---$/{n++; next} n>=2{printf "%d:%s\n", NR, $0}' "$skill" \
+             | grep -E '\$[0-9]' | head -3 | tr '\n' ' ')
     if [ -z "$posn" ]; then
       ok "skill '$sdir' body has no unbraced positional tokens"
     else

@@ -42,15 +42,25 @@ none — take the bootstrap row of the table below. A **non-empty** value is the
 list that §"The supplied ticket key" parses, and the repo-qualified target that the
 rest of this step resolves from.
 
+**There is a third state, and it is not "non-empty".** If the line still reads
+literally `arguments: $ARGUMENTS`, with the token undisturbed, then this harness does
+not interpolate skill bodies at all — **treat it exactly as empty and take the
+bootstrap row.** Never try to parse the token itself as a target: it matches none of
+the four accepted PR forms, and reading it as a supplied argument would deny this run
+the cwd bootstrap it should have fallen back to. Claude Code interpolates; other
+harnesses this plugin supports may not.
+
 Two consequences worth stating, because both have already cost a run:
 
 - **Never report "no arguments were supplied" without quoting that line.** It is
   cheap to check and it is the difference between a correct cwd bootstrap and one
   that silently ignored a target the caller named.
 - **An unbraced positional token anywhere in this file is rewritten with the
-  caller's arguments before this agent ever sees it.** Substitution is 0-indexed —
-  `${0}` is the *first* argument, `${1}` the second — and out-of-range tokens are
-  left as literal text, so the damage depends on how many arguments were passed.
+  caller's arguments before this agent ever sees it.** Substitution is 0-indexed:
+  the unbraced token — spelled `${0}` throughout this paragraph so that it survives
+  to be read — resolves to the *first* argument, `${1}` to the second. Out-of-range
+  tokens are left as literal text, so the damage depends on how many arguments were
+  passed.
   Backticks do not protect it; a code span is rewritten exactly like prose. That is
   why no shell snippet below uses `awk`, whose field references are spelled the same
   way: a three-argument invocation would splice the PR target into the middle of an
