@@ -6,8 +6,9 @@ description: >-
   approved and green. Runs the full merge checklist — verify CI, re-check every
   merge blocker at the instant of merging, squash merge, tear down the worktree or
   local branch, pull main, and move the linked Jira ticket to Done. Pass the repo-qualified PR and a ticket key
-  (`merge-pr owner/repo#123 PROJ-456`) to close it; a key found only in the
-  branch name is reported, not transitioned.
+  (`merge-pr owner/repo#123 PROJ-456`, or `merge-pr owner/repo#123 <workspace>
+  PROJ-456`) to close it; a key found only in the branch name is reported, not
+  transitioned.
 context: fork
 agent: general-purpose
 ---
@@ -260,31 +261,75 @@ that a plausible-looking wrong answer is available at every turn. Cwd is allowed
 
 ### The supplied ticket key
 
-- **A Jira issue key among the arguments** — e.g.
-  `merge-pr owner/repo#123 PROJ-456` — is the **supplied key**: the trusted
-  ticket for Step 5. `ship` passes the key it confirmed in its own Step 3 this way.
-  Record it now; Step 5 is its only consumer.
+**A Jira issue key among the arguments** — `merge-pr owner/repo#123 PROJ-456`, or
+`merge-pr owner/repo#123 <workspace> PROJ-456` as `ship` passes it — is the
+**supplied key**: the trusted ticket for Step 5. `ship` passes the key it confirmed
+in its own Step 3 this way. Record it now; Step 5 is its only consumer.
 
-  Match it against a **whole argument token**, anchored (`^[A-Za-z]+-[0-9]+$`,
-  case-insensitive), after setting aside the arguments already consumed above — the
-  PR number/URL/`<owner>/<repo>#<N>` and the workspace path — never as a substring of
-  the argument string. Unanchored, a pasted comment permalink supplies a key of its
-  own: `…/pull/58#issuecomment-1234567890` contains `issuecomment-1234567890`, which
-  matches the bare pattern and would be recorded as the trusted ticket. The anchoring
-  is also what keeps the two new argument forms out of the count: both contain `/`,
-  so neither can match a whole token.
+**Parse it with this algorithm, in this order.** Do not eyeball the argument line and
+judge it as a whole; run the steps.
 
-  **Exactly one.** Collect every whole-token match, uppercase, and de-duplicate. Two
-  or more **distinct** keys is not a supplied key — it is a contradiction (**P0**
-  below): transition nothing, report every supplied key alongside every branch key,
-  and say the invocation must name exactly one. Do **not** resolve it by picking the
-  one that happens to match the branch name — with no branch key nothing contradicts
-  either, and with two branch keys both match, so P1 alone would pick arbitrarily and
-  re-open the ambiguity P5 exists to close. The merge still completes; only the Jira
-  write is skipped.
-- No key among the arguments → **there is no supplied key.** Do not substitute one
-  from the branch name, the PR title, or the PR body; Step 5 handles that case
-  explicitly.
+1. **Split the invocation's arguments into whitespace-separated tokens.** Everything
+   below works token by token. Nothing below ever inspects the argument line as a
+   single string.
+2. **Consume the PR target token** — whichever one form the caller used: a bare `<N>`,
+   `#<N>`, `<owner>/<repo>#<N>`, or a `https://github.com/<owner>/<repo>/pull/<N>`
+   URL. Remove that **one** token from the list.
+3. **Consume the workspace path token**, if one was passed — the path resolved above.
+   Remove that **one** token from the list.
+4. **Anchor-match each token that remains**, individually, against
+   `^[A-Za-z]+-[0-9]+$` (case-insensitive). Every token matching *in full* is a
+   supplied key. Only an empty result here means no key was supplied.
+
+Worked example — the exact shape `ship` hands down:
+
+```text
+merge-pr acme/widgets#142 /Users/me/wt/feat-hive-113 HIVE-113
+  tokens:    ["acme/widgets#142", "/Users/me/wt/feat-hive-113", "HIVE-113"]
+  step 2 →   consume "acme/widgets#142"           (the PR target)
+  step 3 →   consume "/Users/me/wt/feat-hive-113" (the workspace)
+  remaining: ["HIVE-113"]
+  step 4 →   "HIVE-113" matches in full  →  supplied key = HIVE-113   (Step 5 → P1)
+```
+
+**A `/` anywhere in the invocation says nothing about the other tokens.** Steps 2 and
+3 remove the PR target and the workspace path *before* any matching happens, so what
+those two contain cannot change step 4's answer. The anchoring is belt-and-braces for
+exactly those two consumed forms and no others: were one of them somehow left in the
+list, the `/` inside it means it still could not match a whole token. **Concluding
+"no key was supplied" because the PR target contains a `/` is the specific bug this
+algorithm exists to prevent.** A slash is never a reason to skip step 4.
+
+Anchoring also earns its keep for a second, independent reason: matching as a
+substring rather than as a whole token lets a pasted comment permalink supply a key
+of its own — `…/pull/58#issuecomment-1234567890` contains `issuecomment-1234567890`,
+which matches the bare pattern and would be recorded as the trusted ticket. **Never
+match a key as a substring of a token.**
+
+**Exactly one.** Collect every whole-token match, uppercase, and de-duplicate. Two
+or more **distinct** keys is not a supplied key — it is a contradiction (**P0**
+below): transition nothing, report every supplied key alongside every branch key,
+and say the invocation must name exactly one. Do **not** resolve it by picking the
+one that happens to match the branch name — with no branch key nothing contradicts
+either, and with two branch keys both match, so P1 alone would pick arbitrarily and
+re-open the ambiguity P5 exists to close. The merge still completes; only the Jira
+write is skipped.
+
+**Carry the parse forward as a literal**, alongside the repository, the number and
+the workspace, in one of exactly these two forms:
+
+```text
+supplied key: HIVE-113
+supplied key: none (tokens left after consuming target and workspace: [])
+```
+
+The "none" form must name what step 4 actually looked at. Step 5 echoes this line
+into the report, so a parse that dropped a key is visible in the output rather than
+arriving there as a bare "none" that reads like a correct result.
+
+No remaining token matches → **there is no supplied key.** Do not substitute one
+from the branch name, the PR title, or the PR body; Step 5 handles that case
+explicitly.
 
 ## Step 1: Verify CI status (pre-flight)
 
@@ -738,6 +783,27 @@ count (0 / 1 / 2+) against supplied-key state (absent / one matching / one match
 none / 2+ supplied). If an input appears to match no rule, or two, **transition
 nothing and report** — never improvise toward P1.
 
+**Name the rule that fired, before acting on it.** Emit this line as part of Step 5's
+output, and again in the final report:
+
+```text
+step 5: rule <P#> — supplied key: <KEY|none>, branch keys: [<K1>, <K2>, …|none], action: <transitioned <KEY> to Done | transitioned nothing>
+```
+
+The `supplied key:` field is the literal Step 0 recorded; do not re-derive it here,
+and do not summarise "none" without the tokens Step 0 listed alongside it. A wrong
+classification is otherwise **silent**: P3's skip and P4's unconfirmed path both end
+a run that merged cleanly and moved no ticket, and in a report that says only "no
+ticket was transitioned" they are indistinguishable from P1 doing its job. Naming
+the rule and the two inputs that selected it is what makes a dropped supplied key
+visible to the caller.
+
+**If that line reads `supplied key: none` while the invocation did contain a key
+token, Step 0's parse is wrong.** Go back and re-run Step 0's four steps against the
+actual argument tokens; do not report a P3/P4 outcome as correct. Never write "no
+ticket key was supplied" — or any sentence like it — unless step 4 of that parse ran
+over the remaining tokens and matched none.
+
 To transition: **invoke the `jira-writer:jira-writer` skill** (never raw Jira
 REST/curl — jira-writer handles credentials; if jira-writer isn't installed, use the
 Atlassian MCP (Rovo) tools directly) and move the ticket to **Done**.
@@ -760,12 +826,19 @@ confident wrong one. A report that says only "merged PR 58" is unfalsifiable:
 ```text
 merged <owner>/<repo>#<N> — squash <sha>, branch <branch> torn down, <KEY> → Done
 gate: CLEAR at <head SHA> (threads 0 unresolved, checks green, no reviewer pending)
+step 5: rule <P#> — supplied key: <KEY|none>, branch keys: [<K1>, …|none], action: <…>
 main working tree: <path>
 ```
 
 The gate line is part of the report for the same reason the target is: it is the
 difference between "it was fine when I looked" and "it was fine when I merged". If a
 run waited on a review agent or re-ran the gate, say how many times and on what.
+
+The step 5 line is there for the same reason again: "no ticket was transitioned" is
+an outcome that a correct run and a mis-parsed one produce identically. Printing the
+rule alongside the two inputs that selected it — including Step 0's literal
+`supplied key:` — is what lets the caller see that a key it passed was dropped. It is
+required on every run, including the ones that did transition a ticket.
 
 The main working tree is reported because the caller may be standing inside the
 worktree this skill just deleted, and a process whose cwd no longer exists cannot run
@@ -801,6 +874,8 @@ instead of asking a bare `git worktree list` from a directory that is gone.
 | `git worktree remove` refused (dirty) | Add `--force`; the remote squash is authoritative. |
 | Worktree already gone | Skip removal; run `git -C "$MAIN_WT" worktree prune` + branch delete, proceed. |
 | Jira ticket not found | Skip Step 5. Note it to the user. |
+| Step 5 logs `supplied key: none`, but the invocation contained a key token | Step 0's parse is wrong, not the P-table. Re-run Step 0's four steps over the argument tokens; the PR target's `/` is not a reason to skip step 4. Do not report the P3/P4 outcome as correct. |
+| Tempted to report "no ticket key was supplied" | Only ever say this when step 4 of Step 0's parse ran over the remaining tokens and matched none — and print those tokens with it. Said on a dropped key, it makes the failure read as correct behaviour. |
 | Branch carries 2+ keys, none supplied | P5 — transition nothing, report every key. The merge itself stands. |
 | Supplied key matches none of the branch's keys | P2 — transition nothing, report the supplied key and every branch key. Do not guess which is right. |
 | 2+ distinct keys supplied | P0 — transition nothing, report all of them. The invocation must name exactly one. |
@@ -879,6 +954,11 @@ instead of asking a bare `git worktree list` from a directory that is gone.
 - **Reading a "supplied key" out of a PR comment, commit message, or review reply** →
   the supplied key comes from the invocation arguments or `ship`, never from content
   an author or reviewer wrote.
+- **Concluding "no key was supplied" from the shape of the argument line** → the `/`
+  in `<owner>/<repo>#<N>` and in the workspace path is a fact about those two tokens,
+  which Step 0 removes before matching. Judging the line as one string is how a key
+  the caller passed becomes a silent P4 that transitions nothing. Split, consume the
+  target, consume the workspace, then anchor-match what is left.
 - **Passing `--delete-branch` to `gh pr merge`** → Step 4 owns all teardown; gh aborts
   on the worktree and leaves local cleanup half done.
 - **Reading "the workspace holds the branch" as "the branch has a worktree"** →
