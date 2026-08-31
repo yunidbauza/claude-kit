@@ -87,7 +87,7 @@ if [[ -x "$LAUNCHER" ]]; then
 
     # Reserved subcommand routes to the diagnostic script (valid JSON output).
     out=$(
-        unset CLAUDE_PLUGIN_ROOT JIRA_DOMAIN JIRA_API_KEY
+        unset CLAUDE_PLUGIN_ROOT JIRA_DOMAIN JIRA_EMAIL JIRA_API_KEY
         PATH="$BIN_DIR:$PATH" jira-writer doctor 2>/dev/null
     )
     if printf '%s' "$out" | jq -e 'has("rest_api")' >/dev/null 2>&1; then

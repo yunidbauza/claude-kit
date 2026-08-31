@@ -29,6 +29,9 @@ jobs:
       - name: Run node tests
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: node --test test-markdown-to-adf.mjs test-adf-validate.mjs
+      - name: Run credential resolution tests
+        working-directory: plugins/jira-writer/skills/jira-writer/scripts
+        run: bash test-credentials.sh
       - name: Run wrapper tests
         working-directory: plugins/jira-writer/skills/jira-writer/scripts
         run: bash test-wrapper-flags.sh

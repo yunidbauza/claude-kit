@@ -126,7 +126,7 @@ test_update_merges_fields_json_with_desc_file() {
   tmp=$(mktemp --suffix=.md 2>/dev/null || mktemp -t mdXXXX).md
   printf '# New body\n\nUpdated description paragraph.\n' > "$tmp"
   local out
-  out=$(env -u JIRA_API_KEY -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
+  out=$(env -u JIRA_API_KEY -u JIRA_EMAIL -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
     update_issue INCORP-1 '{"summary":"New title"}' --desc-file "$tmp" 2>/dev/null || true)
   echo "$out" | jq -e '.api == "mcp_fallback"' >/dev/null \
     || fail "expected mcp_fallback without creds, got: $out"
@@ -149,7 +149,7 @@ test_update_desc_file_only_still_works() {
   tmp=$(mktemp --suffix=.md 2>/dev/null || mktemp -t mdXXXX).md
   printf 'plain body line\n' > "$tmp"
   local out
-  out=$(env -u JIRA_API_KEY -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
+  out=$(env -u JIRA_API_KEY -u JIRA_EMAIL -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
     update_issue INCORP-1 --desc-file "$tmp" 2>/dev/null || true)
   echo "$out" | jq -e '.api == "mcp_fallback" and (.params.fields.description | type == "string" and startswith("plain body line"))' >/dev/null \
     || fail "desc-file only should still update description (as original markdown): $out"
@@ -174,7 +174,8 @@ BASH
   chmod +x "$MOCK_BIN/curl"
   export PATH="$MOCK_BIN:$PATH"
   export JIRA_DOMAIN="example.atlassian.net"
-  export JIRA_API_KEY="user@example.com:fake-token"
+  export JIRA_EMAIL="user@example.com"
+  export JIRA_API_KEY="fake-token"
 }
 
 teardown_mock_curl() {
@@ -305,7 +306,8 @@ BASH
   export MOCK_LOG="$MOCK_DIR/log"
   export PATH="$MOCK_DIR:$PATH"
   export JIRA_DOMAIN="example.atlassian.net"
-  export JIRA_API_KEY="u@e.com:x"
+  export JIRA_EMAIL="u@e.com"
+  export JIRA_API_KEY="x"
 
   bash "$SCRIPT_DIR/jira-api-wrapper.sh" get_issue INCORP-1 --summary-only >/dev/null
   # fields is percent-encoded before hitting the URL (commas become %2C)
@@ -379,7 +381,8 @@ BASH
   chmod +x "$mock_dir/curl"
   export PATH="$mock_dir:$PATH"
   export JIRA_DOMAIN="example.atlassian.net"
-  export JIRA_API_KEY="user@example.com:fake-token"
+  export JIRA_EMAIL="user@example.com"
+  export JIRA_API_KEY="fake-token"
 
   local out
   out=$(bash "$SCRIPT_DIR/jira-api-wrapper.sh" link_issues HB-1 Blocks HB-2 2>/dev/null)
@@ -415,7 +418,7 @@ test_link_issues_arity
 test_create_issue_task_default() {
   # SKILL.md: "Default issue type is Task" — 2 positionals = PROJECT SUMMARY.
   local out
-  out=$(JIRA_WRITER_DRY_RUN=1 JIRA_DOMAIN=example.atlassian.net JIRA_API_KEY=u@e.com:x \
+  out=$(JIRA_WRITER_DRY_RUN=1 JIRA_DOMAIN=example.atlassian.net JIRA_EMAIL=u@e.com JIRA_API_KEY=x \
     bash "$SCRIPT_DIR/jira-api-wrapper.sh" create_issue INCORP "Just a summary" 2>/dev/null)
   echo "$out" | jq -e '.fields.issuetype.name == "Task" and .fields.summary == "Just a summary"' >/dev/null \
     || fail "2-arg create should default type to Task: $out"
@@ -445,7 +448,8 @@ BASH
   chmod +x "$mock_dir/curl"
   export PATH="$mock_dir:$PATH"
   export JIRA_DOMAIN="example.atlassian.net"
-  export JIRA_API_KEY="user@example.com:fake-token"
+  export JIRA_EMAIL="user@example.com"
+  export JIRA_API_KEY="fake-token"
   tmp=$(mktemp -t mdXXXX).md
   printf '## Appended\n' > "$tmp"
 
@@ -468,7 +472,7 @@ test_update_append_requires_rest() {
   local tmp out
   tmp=$(mktemp -t mdXXXX).md
   printf 'extra\n' > "$tmp"
-  out=$(env -u JIRA_API_KEY -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
+  out=$(env -u JIRA_API_KEY -u JIRA_EMAIL -u JIRA_DOMAIN bash "$SCRIPT_DIR/jira-api-wrapper.sh" \
     update_issue K-1 '{}' --desc-file "$tmp" --append 2>/dev/null || true)
   echo "$out" | jq -e '.api == "error" and (.error | test("append requires REST"))' >/dev/null \
     || fail "--append without creds should be api:error, got: $out"

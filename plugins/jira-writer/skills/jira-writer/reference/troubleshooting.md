@@ -22,7 +22,7 @@ clarifying `note`. Plain-text input is unchanged — REST failure still emits
 | REST API credentials | Fall back to MCP; if MCP unavailable, stop with setup instructions |
 | MCP | REST API handles everything (no impact if REST configured) |
 | Both REST and MCP | Skill cannot function; stop with setup instructions |
-| JIRA_API_KEY only | Text ops via MCP; diagrams/checkboxes skipped with warning |
+| JIRA_EMAIL + JIRA_API_KEY but no JIRA_DOMAIN | Text ops via MCP; diagrams/checkboxes skipped with warning |
 | mmdc | Diagrams skipped with warning; offer installation |
 
 ## Error Response Table
@@ -48,7 +48,7 @@ When a description update fails after attachments were uploaded:
 ```
 FOR each uploaded attachment_id:
     curl -X DELETE \
-      -H "Authorization: Basic $(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')" \
+      -H "Authorization: Basic $(echo -n "$JIRA_EMAIL:$JIRA_API_KEY" | base64 | tr -d '\n')" \
       "https://$JIRA_DOMAIN/rest/api/3/attachment/$attachment_id"
 REPORT: "Failed to update the issue description. I've cleaned up the uploaded
          diagram attachments to avoid orphaned files. Error: [details]"
@@ -91,9 +91,14 @@ and under Copilot it does not exist at all.
 
 ## Known Issues & Gotchas
 
-1. **JIRA_API_KEY format** — store as plain `email:api_token`; scripts base64-encode
-   internally. Wrong: `export JIRA_API_KEY=$(echo -n "email:token" | base64)`.
-   Correct: `export JIRA_API_KEY="email:token"`.
+1. **Credential format** — `JIRA_EMAIL` holds the account email and `JIRA_API_KEY` the
+   **raw** token; the scripts join and base64-encode them internally. Wrong:
+   `export JIRA_API_KEY=$(echo -n "email:token" | base64)`. Also wrong now:
+   `export JIRA_API_KEY="email:token"` — the pre-1.11.0 combined form, still accepted
+   but deprecated, and it warns once per run until split. `"$JW" doctor` reports
+   the form in effect as `credential_format`: `split` (good), `legacy_combined` (split
+   it), `half_migrated` (`JIRA_API_KEY` still carries the `email:` prefix — drop it),
+   or `incomplete`.
 2. **ADF Media nodes** — use `type: "external"` with the attachment content URL, not
    `type: "file"` with an ID. URL: `https://$JIRA_DOMAIN/rest/api/3/attachment/content/<id>`.
 3. **MCP cannot handle complex ADF** — checkboxes become escaped text (not interactive

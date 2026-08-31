@@ -11,7 +11,11 @@
 #
 # Environment Variables (required):
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
-#   JIRA_API_KEY  - Your email:api_token (NOT base64 encoded)
+#   JIRA_EMAIL    - Your Atlassian account email (e.g., you@company.com)
+#   JIRA_API_KEY  - Your raw API token (NOT base64, no email prefix)
+#
+#   The pre-1.11.0 form — JIRA_API_KEY holding "email:token" — is still
+#   accepted. See jira-credentials.sh for the full resolution order.
 #
 # Session Caching:
 #   Metadata (projects, issue types) is cached during script execution.
@@ -37,6 +41,16 @@ fi
 _jira_log_info() { echo -e "${GREEN}[INFO]${NC} $1" >&2; }
 _jira_log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&2; }
 _jira_log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+
+# Credential resolution (JIRA_EMAIL + JIRA_API_KEY, with legacy fallback).
+# Sourced after the colors so its warnings can use them.
+_JIRA_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -f "$_JIRA_LIB_DIR/jira-credentials.sh" ]]; then
+    _jira_log_error "jira-writer scripts incomplete: jira-credentials.sh missing at $_JIRA_LIB_DIR"
+    _jira_log_error "The plugin likely updated mid-session — restart Claude Code to refresh CLAUDE_PLUGIN_ROOT."
+    exit 127
+fi
+source "$_JIRA_LIB_DIR/jira-credentials.sh"
 
 # Session cache directory
 JIRA_CACHE_DIR="${JIRA_CACHE_DIR:-/tmp/jira_cache_$$}"
@@ -86,32 +100,29 @@ _jira_cache_set() {
 
 # Get base64 encoded auth header
 _jira_get_auth_header() {
-    if [[ -z "${JIRA_API_KEY:-}" ]]; then
-        _jira_log_error "JIRA_API_KEY not set"
+    local header
+    if ! header=$(jira_credentials_auth_header); then
+        _jira_log_error "Jira credentials not set (need JIRA_EMAIL + JIRA_API_KEY)"
         return 1
     fi
-    echo -n "$JIRA_API_KEY" | base64 | tr -d '\n'
+    printf '%s' "$header"
 }
 
 # Check if credentials are configured
 jira_check_credentials() {
-    local missing=0
+    local missing
+    missing=$(jira_credentials_missing_vars)
 
-    if [[ -z "${JIRA_DOMAIN:-}" ]]; then
-        _jira_log_error "JIRA_DOMAIN not set"
-        missing=1
+    if [[ -z "$missing" ]]; then
+        return 0
     fi
 
-    if [[ -z "${JIRA_API_KEY:-}" ]]; then
-        _jira_log_error "JIRA_API_KEY not set"
-        missing=1
-    fi
+    local var
+    while IFS= read -r var; do
+        [[ -n "$var" ]] && _jira_log_error "$var not set"
+    done <<< "$missing"
 
-    if [[ $missing -eq 1 ]]; then
-        return 1
-    fi
-
-    return 0
+    return 1
 }
 
 # --- Core HTTP Functions ---

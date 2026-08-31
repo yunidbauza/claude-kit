@@ -24,7 +24,8 @@
 # Possible recommended values:
 #   "rest_api"        - REST credentials present and authentication verified
 #   "rest_fix_auth"   - REST credentials found but authentication failed; fix creds
-#   "rest_configure"  - No REST credentials set; configure JIRA_DOMAIN + JIRA_API_KEY
+#   "rest_configure"  - No REST credentials set; configure JIRA_DOMAIN,
+#                       JIRA_EMAIL and JIRA_API_KEY
 #
 # Exit Codes:
 #   0 - REST API authenticated successfully
@@ -34,6 +35,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Shared credential resolution — same code path the wrapper authenticates with.
+if [[ ! -f "$SCRIPT_DIR/jira-credentials.sh" ]]; then
+    echo "[ERROR] jira-writer scripts incomplete: jira-credentials.sh missing at $SCRIPT_DIR" >&2
+    exit 127
+fi
+source "$SCRIPT_DIR/jira-credentials.sh"
 
 # Colors for output
 if [[ -t 2 ]]; then
@@ -84,6 +92,16 @@ test_rest_api() {
     fi
     log_success "JIRA_API_KEY: configured (${#JIRA_API_KEY} chars)"
 
+    if ! jira_credentials_pair >/dev/null; then
+        log_fail "JIRA_EMAIL not set"
+        REST_ERROR="JIRA_EMAIL environment variable not set"
+        return 1
+    fi
+    if [[ -n "${JIRA_EMAIL:-}" ]]; then
+        log_success "JIRA_EMAIL: $JIRA_EMAIL"
+    fi
+    jira_credentials_warn_if_legacy
+
     # Check required tools
     if ! command -v curl &> /dev/null; then
         log_fail "curl not found"
@@ -105,7 +123,7 @@ test_rest_api() {
     log_info "Testing authentication..."
 
     local auth_header
-    auth_header=$(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')
+    auth_header=$(jira_credentials_auth_header)
 
     local response
     response=$(curl -s -w "\n%{http_code}" \
@@ -168,12 +186,12 @@ determine_recommendation() {
     elif [[ "$REST_AVAILABLE" == "true" ]]; then
         RECOMMENDED="rest_fix_auth"
         log_warn "REST API credentials found but authentication failed"
-        log_info "Fix your JIRA_DOMAIN / JIRA_API_KEY credentials to restore REST access"
-        log_info "Format: JIRA_API_KEY=\"your-email@company.com:your-api-token\""
+        log_info "Fix your JIRA_DOMAIN / JIRA_EMAIL / JIRA_API_KEY credentials to restore REST access"
+        log_info "JIRA_EMAIL is the account email; JIRA_API_KEY is the raw token (not base64)"
     else
         RECOMMENDED="rest_configure"
         log_warn "REST API not configured"
-        log_info "Set JIRA_DOMAIN and JIRA_API_KEY environment variables to enable REST"
+        log_info "Set JIRA_DOMAIN, JIRA_EMAIL and JIRA_API_KEY environment variables to enable REST"
         log_info "Get an API token from: https://id.atlassian.com/manage-profile/security/api-tokens"
     fi
 }
@@ -214,7 +232,8 @@ generate_output() {
             "setup_instructions": {
                 "rest_api": {
                     "JIRA_DOMAIN": "export JIRA_DOMAIN=\"company.atlassian.net\"",
-                    "JIRA_API_KEY": "export JIRA_API_KEY=\"email@company.com:your-api-token\"",
+                    "JIRA_EMAIL": "export JIRA_EMAIL=\"you@company.com\"",
+                    "JIRA_API_KEY": "export JIRA_API_KEY=\"your_api_token\"",
                     "get_token": "https://id.atlassian.com/manage-profile/security/api-tokens"
                 }
             }

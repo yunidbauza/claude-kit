@@ -17,7 +17,8 @@
 #
 # Environment Variables (required):
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
-#   JIRA_API_KEY  - Your email:api_token (NOT base64 encoded)
+#   JIRA_EMAIL    - Your Atlassian account email (e.g., you@company.com)
+#   JIRA_API_KEY  - Your raw API token (NOT base64, no email prefix)
 #
 # Output (JSON):
 #   { "attachment_id": "12345", "content_url": "https://...", "filename": "diagram.png" }
@@ -85,14 +86,26 @@ check_prerequisites() {
         log_info "JIRA_DOMAIN: $JIRA_DOMAIN"
     fi
 
-    # Check JIRA_API_KEY
+    # Check JIRA_EMAIL / JIRA_API_KEY (the legacy combined form still resolves)
     if [[ -z "${JIRA_API_KEY:-}" ]]; then
         log_error "JIRA_API_KEY environment variable not set"
-        log_error "Set with: export JIRA_API_KEY=\"email@domain.com:your_api_token\""
+        log_error "Set with: export JIRA_API_KEY=\"your_api_token\"   # raw token"
         errors=$((errors + 1))
     else
         log_info "JIRA_API_KEY: set (${#JIRA_API_KEY} chars)"
     fi
+
+    if ! jira_credentials_pair >/dev/null; then
+        if [[ -n "${JIRA_API_KEY:-}" ]]; then
+            log_error "JIRA_EMAIL environment variable not set"
+            log_error "Set with: export JIRA_EMAIL=\"you@company.com\""
+            errors=$((errors + 1))
+        fi
+    elif [[ -n "${JIRA_EMAIL:-}" ]]; then
+        log_info "JIRA_EMAIL: $JIRA_EMAIL"
+    fi
+
+    jira_credentials_warn_if_legacy
 
     if [[ $errors -gt 0 ]]; then
         return 1

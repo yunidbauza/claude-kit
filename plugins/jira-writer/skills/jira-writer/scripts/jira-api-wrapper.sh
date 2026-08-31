@@ -28,7 +28,11 @@
 #
 # Environment Variables:
 #   JIRA_DOMAIN   - Your Jira domain (e.g., company.atlassian.net)
-#   JIRA_API_KEY  - Your email:api_token (NOT base64 encoded)
+#   JIRA_EMAIL    - Your Atlassian account email (e.g., you@company.com)
+#   JIRA_API_KEY  - Your raw API token (NOT base64, no email prefix)
+#
+#   The pre-1.11.0 form — JIRA_API_KEY holding "email:token" — still works and
+#   emits a one-time deprecation warning on stderr.
 #
 
 set -euo pipefail
@@ -109,10 +113,7 @@ output_mcp_fallback() {
 
 # Check if REST API is available
 check_rest_available() {
-    if [[ -z "${JIRA_DOMAIN:-}" ]] || [[ -z "${JIRA_API_KEY:-}" ]]; then
-        return 1
-    fi
-    return 0
+    jira_credentials_available
 }
 
 # Shared jq filter for ADF document detection. Used by _to_adf_body and
@@ -1043,7 +1044,7 @@ op_test_connection() {
         jq -n '{
             "rest_api": {
                 "available": false,
-                "reason": "Credentials not configured (JIRA_DOMAIN and/or JIRA_API_KEY missing)"
+                "reason": "Credentials not configured (need JIRA_DOMAIN, JIRA_EMAIL and JIRA_API_KEY)"
             },
             "recommended": "rest_configure"
         }'
@@ -1317,6 +1318,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && [[ -z "${JIRA_WRAPPER_TEST_MODE:-}" ]]
     operation="$1"
     shift
     operation="$(normalize_op "$operation")"
+
+    # One-time deprecation notice for the pre-1.11.0 single-variable credential
+    # form. Emitted here — at the CLI boundary, before any operation runs — so
+    # it can never land inside output an op captures with 2>&1 and feeds to jq.
+    jira_credentials_warn_if_legacy
 
     case "$operation" in
         get_issue)
