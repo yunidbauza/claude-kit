@@ -1,5 +1,58 @@
 # Changelog — jira-writer
 
+## 1.11.0 — 2026-08-31
+
+### Changed
+- **Credentials are now three variables, one job each.** `JIRA_EMAIL` holds the
+  Atlassian account email and `JIRA_API_KEY` holds the **raw** token:
+
+  ```bash
+  export JIRA_DOMAIN="company.atlassian.net"   # host only, no https://, no trailing slash
+  export JIRA_EMAIL="you@company.com"
+  export JIRA_API_KEY="your_api_token"         # raw token, NOT base64
+  ```
+
+  The old single-variable form (`JIRA_API_KEY="you@company.com:token"`) packed two
+  unrelated values into one secret: it could not be rotated without retyping the
+  email, it made `JIRA_API_KEY` unusable anywhere that expects a bare token, and a
+  missing colon surfaced only as a generic `401`.
+
+### Backwards compatibility
+- **The combined form still authenticates.** Nothing to do on upgrade. When
+  `JIRA_EMAIL` is unset and `JIRA_API_KEY` contains a colon, the pair is used as-is
+  and one deprecation warning is printed to stderr per run. Support for it will be
+  removed in a future release. To migrate:
+
+  ```bash
+  export JIRA_EMAIL="${JIRA_API_KEY%%:*}"
+  export JIRA_API_KEY="${JIRA_API_KEY#*:}"
+  ```
+
+- **The half-migrated state is handled too.** If `JIRA_EMAIL` is set but
+  `JIRA_API_KEY` still starts with `"$JIRA_EMAIL:"`, the duplicated prefix is
+  dropped rather than sent as `email:email:token` — which could only ever 401 —
+  and its own warning points at the fix.
+
+### Added
+- `scripts/jira-credentials.sh` — a source-only library that is now the single
+  place credentials are resolved. Every script that authenticates (`jira-rest-api.sh`,
+  `jira-api-wrapper.sh`, `jira-mermaid-upload.sh`, `check-prerequisites.sh`,
+  `test-jira-connection.sh`) goes through it, so the doctor can no longer disagree
+  with the code that actually builds the `Authorization` header.
+- `check-prerequisites.sh` (`"$JW" doctor`) reports `credential_format` — `split`,
+  `legacy_combined`, `half_migrated`, or `incomplete` — plus a
+  `credential_format_note` naming the fix, and a `jira_email` block alongside
+  `jira_domain` / `jira_api_key`.
+- `scripts/test-credentials.sh` — 26 assertions covering the resolution matrix, the
+  format predicates, missing-variable reporting, the base64 header, and the
+  one-shot warning. Wired into CI.
+
+### Fixed
+- The deprecation warning is emitted **only** from CLI entry points (the wrapper's
+  dispatch, the mermaid preflight, the connection test), never from the resolution
+  path itself. Several call sites capture helper output with `2>&1` and feed it
+  straight to `jq`; a warning on that path would have corrupted their JSON.
+
 ## 1.10.0 — 2026-08-04
 
 ### Added

@@ -67,12 +67,15 @@ Ticket I/O with content Jira actually accepts. REST is the primary path; MCP is 
 - **Lossless append** — `update_issue --append` concatenates onto the existing description ADF instead of replacing it
 - **Epic parenting** — `--parent KEY` on `create_issue`, with format validation
 
-**Requires** `JIRA_DOMAIN` and `JIRA_API_KEY` (raw `email:token`, not base64). Node 18+ is optional but enables the markdown converter and validator. `mmdc` is only needed for diagrams.
+**Requires** `JIRA_DOMAIN`, `JIRA_EMAIL` and `JIRA_API_KEY` (the raw token, not base64). Node 18+ is optional but enables the markdown converter and validator. `mmdc` is only needed for diagrams.
 
 ```bash
-export JIRA_DOMAIN="company.atlassian.net"
-export JIRA_API_KEY="your-email@company.com:your-api-token"
+export JIRA_DOMAIN="company.atlassian.net"   # host only, no https://, no trailing slash
+export JIRA_EMAIL="you@company.com"
+export JIRA_API_KEY="your_api_token"         # raw token, NOT base64
 ```
+
+The pre-1.11.0 form — `JIRA_API_KEY="email:token"` — still works and warns once per run.
 
 Full reference — script table, input modes, failure routing, troubleshooting — in [plugins/jira-writer/README.md](plugins/jira-writer/README.md).
 

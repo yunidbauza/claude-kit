@@ -43,7 +43,8 @@ enforces its goal — see [Harness differences](#harness-differences) below.
   `/plugin marketplace add obra/superpowers-marketplace` or
   `copilot plugin marketplace add obra/superpowers-marketplace`.
 - **jira-writer plugin** (this marketplace) — all Jira reads/writes go through
-  `jira-writer:jira-writer`. Requires the `JIRA_API_KEY` env var.
+  `jira-writer:jira-writer`. Requires the `JIRA_DOMAIN`, `JIRA_EMAIL` and
+  `JIRA_API_KEY` env vars.
 - **`gh` CLI** authenticated against your repos.
 - **Node 18+** — runs the `goal-on` Stop verifier under both harnesses.
 

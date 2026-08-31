@@ -17,15 +17,20 @@ provides content (text or markdown) to write to a ticket.
 
 ## Prerequisites
 
-Set two environment variables (REST is the primary path):
+Set three environment variables (REST is the primary path):
 
 ```bash
-export JIRA_DOMAIN="company.atlassian.net"
-export JIRA_API_KEY="your-email@domain.com:your_api_token"   # raw email:token, NOT base64
+export JIRA_DOMAIN="company.atlassian.net"   # host only, no https://, no trailing slash
+export JIRA_EMAIL="you@company.com"
+export JIRA_API_KEY="your_api_token"         # raw token, NOT base64
 ```
 
 - Generate the API token at https://id.atlassian.com/manage-profile/security/api-tokens
-- Store the **raw** `email:api_token` string — the scripts base64-encode internally.
+- Store the **raw** token — the scripts pair it with `JIRA_EMAIL` and base64-encode
+  internally.
+- **Deprecated:** `JIRA_API_KEY="email:token"` (one variable, pre-1.11.0) still
+  authenticates and warns once per run. If a user hits that warning, tell them to split
+  it: `export JIRA_EMAIL="${JIRA_API_KEY%%:*}"` then `export JIRA_API_KEY="${JIRA_API_KEY#*:}"`.
 - **Fallback:** if REST creds are absent, the wrapper signals the Atlassian MCP
   (`mcp__atlassian__*`). If neither is available, stop and give the setup steps above.
 - **Diagrams** additionally need `mmdc` (`npm install -g @mermaid-js/mermaid-cli`),

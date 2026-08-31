@@ -130,7 +130,8 @@ assert_eq "_to_adf_body malformed JSON: literal text preserved" "{ malformed" "$
 # Test-mode credentials. Subsequent tests assume these are set; Task 5
 # unsets them explicitly when testing the no-credentials fallback path.
 export JIRA_DOMAIN="example.atlassian.net"
-export JIRA_API_KEY="user@example.com:fake-token"
+export JIRA_EMAIL="user@example.com"
+export JIRA_API_KEY="fake-token"
 
 # Use a temp file to capture data from within command-substitution subshells.
 _COMMENT_CAPTURE_FILE="$(mktemp)"
@@ -229,7 +230,7 @@ assert_eq "output_mcp_fallback empty note: field absent" "false" "$(printf '%s' 
 # Stubs from Tasks 2 & 3 (jira_add_comment, jira_create_issue) are still
 # defined in this shell, but the no-credentials branch returns before
 # calling them, so they won't fire here.
-unset JIRA_DOMAIN JIRA_API_KEY
+unset JIRA_DOMAIN JIRA_EMAIL JIRA_API_KEY
 
 # --- add_comment with ADF body when REST credentials missing ---
 adf_in='{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"hi"}]}]}'
@@ -270,7 +271,8 @@ fi
 # Replace the existing jira_add_comment stub with one that returns failure.
 # Restore credentials (Task 5's no-creds tests already unset them).
 export JIRA_DOMAIN="example.atlassian.net"
-export JIRA_API_KEY="user@example.com:fake-token"
+export JIRA_EMAIL="user@example.com"
+export JIRA_API_KEY="fake-token"
 
 jira_add_comment() {
     printf '%s' "$2" > "$_COMMENT_CAPTURE_FILE"
@@ -308,7 +310,7 @@ else
 fi
 
 # --- op_upload_attachment no-creds envelope shape ---
-unset JIRA_DOMAIN JIRA_API_KEY
+unset JIRA_DOMAIN JIRA_EMAIL JIRA_API_KEY
 
 out=$(op_upload_attachment PROJ-1 /tmp/fakefile.png 2>/dev/null) || true
 assert_eq "op_upload_attachment no-creds: api is error" "error" "$(printf '%s' "$out" | jq -r '.api')"
@@ -318,7 +320,8 @@ assert_eq "op_upload_attachment no-creds: rest_error mentions credentials" "true
 # --- op_update_issue rejects malformed JSON ---
 # Credentials set so the error comes from JSON validation, not cred check.
 export JIRA_DOMAIN="example.atlassian.net"
-export JIRA_API_KEY="user@example.com:fake-token"
+export JIRA_EMAIL="user@example.com"
+export JIRA_API_KEY="fake-token"
 
 out=$(op_update_issue PROJ-1 'not json' 2>/dev/null) || true
 assert_eq "op_update_issue malformed JSON: api is error" "error" "$(printf '%s' "$out" | jq -r '.api')"

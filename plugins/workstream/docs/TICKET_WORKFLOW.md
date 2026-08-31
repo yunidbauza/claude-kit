@@ -41,8 +41,9 @@ Standalone entry points:
 - **superpowers plugin** installed (brainstorming, writing-plans,
   using-git-worktrees, test-driven-development, finishing-a-development-branch).
 - **`gh` CLI** authenticated against the repo.
-- **jira-writer plugin** installed and configured — `JIRA_API_KEY` env var (see the jira-writer skill), or
-  the Atlassian MCP connected as fallback.
+- **jira-writer plugin** installed and configured — `JIRA_DOMAIN`, `JIRA_EMAIL` and
+  `JIRA_API_KEY` env vars (see the jira-writer skill), or the Atlassian MCP
+  connected as fallback.
 
 ## Conventions
 

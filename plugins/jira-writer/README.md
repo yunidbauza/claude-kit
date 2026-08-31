@@ -65,8 +65,9 @@ Copilot's native-PowerShell mode is experimental and is not a supported target h
 
 | Dependency | Purpose | Required |
 | ---------- | ------- | -------- |
-| `JIRA_DOMAIN` | Your Jira Cloud domain | Yes |
-| `JIRA_API_KEY` | REST API auth (`email:token`) | Yes |
+| `JIRA_DOMAIN` | Your Jira Cloud domain (host only) | Yes |
+| `JIRA_EMAIL` | Atlassian account email | Yes |
+| `JIRA_API_KEY` | Raw API token (not base64) | Yes |
 | Atlassian MCP | Fallback when REST fails | No (optional) |
 | `mmdc` | Mermaid CLI for diagrams | For diagrams only |
 
@@ -76,21 +77,38 @@ Copilot's native-PowerShell mode is experimental and is not a supported target h
 
 ```bash
 # Required for REST API (primary method)
-export JIRA_DOMAIN="company.atlassian.net"
-export JIRA_API_KEY="your-email@company.com:your-api-token"
+export JIRA_DOMAIN="company.atlassian.net"   # host only, no https://, no trailing slash
+export JIRA_EMAIL="you@company.com"
+export JIRA_API_KEY="your_api_token"         # raw token, NOT base64
 
 # Optional: for Mermaid diagrams
 npm install -g @mermaid-js/mermaid-cli
 ```
+
+### Migrating from the combined `JIRA_API_KEY`
+
+Before 1.11.0 the email and the token shared one variable
+(`JIRA_API_KEY="you@company.com:token"`). That form still authenticates, and the
+plugin prints one deprecation warning per run until you split it:
+
+```bash
+export JIRA_EMAIL="${JIRA_API_KEY%%:*}"    # the part before the colon
+export JIRA_API_KEY="${JIRA_API_KEY#*:}"   # the part after it
+```
+
+Then move both `export` lines into your shell profile. `jira-writer doctor` reports
+which form is in effect under `credential_format` (`split`, `legacy_combined`,
+`half_migrated`, or `incomplete`).
 
 ### Getting Your API Token
 
 1. Go to <https://id.atlassian.com/manage-profile/security/api-tokens>
 2. Click "Create API token"
 3. Give it a label and copy the token
-4. Set `JIRA_API_KEY` as `your-email@company.com:your-token`
+4. Set `JIRA_EMAIL` to your account email and `JIRA_API_KEY` to the token
 
-**Important:** Store the raw `email:token` format. The scripts handle base64 encoding internally.
+**Important:** Store the **raw** token. The scripts pair it with `JIRA_EMAIL` and
+handle base64 encoding internally.
 
 ### Verify Setup
 
@@ -247,7 +265,10 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 #### 401 Unauthorized
 
-- Verify `JIRA_API_KEY` format is `email:token` (not base64 encoded)
+- Verify `JIRA_EMAIL` is your Atlassian account email and `JIRA_API_KEY` is the raw
+  token — not base64, and no `email:` prefix left over from the pre-1.11.0 format
+- Run `jira-writer doctor` and check `credential_format`; `half_migrated` means
+  `JIRA_API_KEY` still carries the email prefix
 - Regenerate API token at <https://id.atlassian.com/manage-profile/security/api-tokens>
 
 #### 404 Not Found

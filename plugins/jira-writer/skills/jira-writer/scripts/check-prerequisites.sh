@@ -22,7 +22,9 @@
 #     },
 #     "mmdc": { "available": true, "path": "/path/to/mmdc" },
 #     "jira_domain": { "available": true, "value": "company.atlassian.net" },
+#     "jira_email": { "available": true, "value": "you@company.com" },
 #     "jira_api_key": { "available": true, "length": 123 },
+#     "credential_format": "split" | "legacy_combined" | "half_migrated" | "incomplete",
 #     "all_ready": true,
 #     "diagram_ready": true,
 #     "api_method": "rest"
@@ -38,6 +40,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Credential resolution is shared with the rest of the plugin so the doctor
+# can never disagree with the code that actually authenticates.
+if [[ ! -f "$SCRIPT_DIR/jira-credentials.sh" ]]; then
+    echo "[ERROR] jira-writer scripts incomplete: jira-credentials.sh missing at $SCRIPT_DIR" >&2
+    exit 127
+fi
+source "$SCRIPT_DIR/jira-credentials.sh"
 
 # Check mmdc
 mmdc_available=false
@@ -90,6 +100,14 @@ if [[ -n "${JIRA_DOMAIN:-}" ]]; then
     jira_domain_value="$JIRA_DOMAIN"
 fi
 
+# Check JIRA_EMAIL
+jira_email_available=false
+jira_email_value=""
+if [[ -n "${JIRA_EMAIL:-}" ]]; then
+    jira_email_available=true
+    jira_email_value="$JIRA_EMAIL"
+fi
+
 # Check JIRA_API_KEY
 jira_api_key_available=false
 jira_api_key_length=0
@@ -98,15 +116,30 @@ if [[ -n "${JIRA_API_KEY:-}" ]]; then
     jira_api_key_length=${#JIRA_API_KEY}
 fi
 
+# Classify how the credentials are supplied
+credentials_resolved=false
+if jira_credentials_pair >/dev/null 2>&1; then
+    credentials_resolved=true
+fi
+
+credential_format="incomplete"
+if jira_credentials_is_half_migrated; then
+    credential_format="half_migrated"
+elif jira_credentials_is_legacy; then
+    credential_format="legacy_combined"
+elif [[ "$credentials_resolved" == "true" ]]; then
+    credential_format="split"
+fi
+
 # Test REST API authentication if credentials are available
 rest_authenticated=false
 rest_user_name=""
 rest_user_email=""
 rest_error=""
 
-if [[ "$jira_domain_available" == "true" ]] && [[ "$jira_api_key_available" == "true" ]] && [[ "$curl_available" == "true" ]] && [[ "$jq_available" == "true" ]]; then
+if [[ "$jira_domain_available" == "true" ]] && [[ "$credentials_resolved" == "true" ]] && [[ "$curl_available" == "true" ]] && [[ "$jq_available" == "true" ]]; then
     # Test authentication
-    auth_header=$(echo -n "$JIRA_API_KEY" | base64 | tr -d '\n')
+    auth_header=$(jira_credentials_auth_header)
     response=$(curl -s -w "\n%{http_code}" \
         -H "Authorization: Basic $auth_header" \
         -H "Content-Type: application/json" \
@@ -132,7 +165,7 @@ fi
 
 # Determine REST API availability
 rest_api_available=false
-if [[ "$jira_domain_available" == "true" ]] && [[ "$jira_api_key_available" == "true" ]]; then
+if [[ "$jira_domain_available" == "true" ]] && [[ "$credentials_resolved" == "true" ]]; then
     rest_api_available=true
 fi
 
@@ -188,8 +221,11 @@ jq -n \
     --argjson node_ok_for_md       "$node_ok_for_md" \
     --argjson jira_domain_available "$jira_domain_available" \
     --arg     jira_domain_value    "$jira_domain_value" \
+    --argjson jira_email_available "$jira_email_available" \
+    --arg     jira_email_value     "$jira_email_value" \
     --argjson jira_api_key_available "$jira_api_key_available" \
     --argjson jira_api_key_length  "$jira_api_key_length" \
+    --arg     credential_format    "$credential_format" \
     --argjson all_ready            "$all_ready" \
     --argjson diagram_ready        "$diagram_ready" \
     --arg     api_method           "$api_method" \
@@ -226,12 +262,29 @@ jq -n \
             "value": (if $jira_domain_value == "" then null else $jira_domain_value end),
             "env_var": "JIRA_DOMAIN"
         },
+        "jira_email": {
+            "available": $jira_email_available,
+            "value": (if $jira_email_value == "" then null else $jira_email_value end),
+            "env_var": "JIRA_EMAIL"
+        },
         "jira_api_key": {
             "available": $jira_api_key_available,
             "length": $jira_api_key_length,
             "env_var": "JIRA_API_KEY",
-            "format": "email@domain.com:api_token (NOT base64 encoded)"
+            "format": "raw API token (NOT base64, no email prefix)"
         },
+        "credential_format": $credential_format,
+        "credential_format_note": (
+            if $credential_format == "legacy_combined" then
+                "JIRA_API_KEY holds \"email:token\" — deprecated. Set JIRA_EMAIL and store the raw token in JIRA_API_KEY."
+            elif $credential_format == "half_migrated" then
+                "JIRA_EMAIL is set but JIRA_API_KEY still starts with \"$JIRA_EMAIL:\" — drop the email prefix from JIRA_API_KEY."
+            elif $credential_format == "split" then
+                null
+            else
+                "Credentials incomplete — set JIRA_DOMAIN, JIRA_EMAIL and JIRA_API_KEY."
+            end
+        ),
         "all_ready": $all_ready,
         "diagram_ready": $diagram_ready,
         "api_method": $api_method,
@@ -239,7 +292,8 @@ jq -n \
             "rest_api": {
                 "step1": "Get API token from: https://id.atlassian.com/manage-profile/security/api-tokens",
                 "step2": "export JIRA_DOMAIN=\"company.atlassian.net\"",
-                "step3": "export JIRA_API_KEY=\"your-email@company.com:your-api-token\""
+                "step3": "export JIRA_EMAIL=\"you@company.com\"",
+                "step4": "export JIRA_API_KEY=\"your_api_token\""
             },
             "diagrams": {
                 "step1": "npm install -g @mermaid-js/mermaid-cli"
