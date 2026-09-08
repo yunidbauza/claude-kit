@@ -2,8 +2,8 @@
 name: ship
 description: >-
   Use when a PR is open and should be driven to merge — "ship it", "ship the
-  ticket", "merge when green", "run the PR endgame", or after
-  superpowers:finishing-a-development-branch produced a PR. Runs the full tail:
+  ticket", "merge when green", "run the PR endgame", or the moment work-on or
+  goal-on has opened the draft PR. Runs the full tail:
   draft self-review → mark ready (the CI trigger) → CI watch → findings triage
   loop → watch-until-approved loop (with main sync) → merge-pr.
 ---
@@ -168,6 +168,13 @@ Dispatch a subagent that invokes the `code-review` skill against this PR, so shi
 context stays lean. Apply its valid findings locally. No CI is needed for this — the
 review reads the diff, not a CI run — which is why it happens on the draft before any
 minutes are spent. Batch all fixes per the batch-push rule; do not push per finding.
+
+**This is the PR's one whole-branch review.** `work-on` skips subagent-driven
+development's own final review on the strength of it, so dispatch it on the most
+capable model available and hand it whatever the implementation phase parked: the
+SDD ledger's deferred-minor and parked-with-ruling lines when there was one, the
+plan's Global Constraints otherwise. A review that never saw the parked list will
+re-find it or, worse, miss what the ruling was covering for.
 
 **Pin the subagent's target explicitly.** It inherits no directory from this
 session, so its prompt must open with the workspace and repo, and instruct it to

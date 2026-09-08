@@ -8,7 +8,9 @@ Each is independently invocable; together they chain end to end:
    │  fetch + reconcile ticket vs codebase (hard gate: user go-ahead)
    │  isolated worktree off the default branch (fetched fresh)
    ▼
-superpowers: brainstorming → writing-plans → implementation → PR
+superpowers: brainstorming (one batched question round) → writing-plans →
+   │  executing-plans inline (subagent-driven only for multi-subsystem + risk)
+   │  full gate on the exact tree → push → draft PR → ship, all in one turn
    ▼
 /workstream:ship [PR] [--auto-merge]
    │  ticket → In Review (open non-draft PR, jira-writer)
@@ -39,7 +41,8 @@ Standalone entry points:
 ## Prerequisites
 
 - **superpowers plugin** installed (brainstorming, writing-plans,
-  using-git-worktrees, test-driven-development, finishing-a-development-branch).
+  using-git-worktrees, test-driven-development, executing-plans,
+  subagent-driven-development).
 - **`gh` CLI** authenticated against the repo.
 - **jira-writer plugin** installed and configured — `JIRA_DOMAIN`, `JIRA_EMAIL` and
   `JIRA_API_KEY` env vars (see the jira-writer skill), or the Atlassian MCP
@@ -47,6 +50,10 @@ Standalone entry points:
 
 ## Conventions
 
+- **One stop per ticket.** work-on's reconciliation report is the only place the
+  flow ends its turn to wait for the user. Brainstorm decisions are asked in one
+  batch, the draft PR opens without a menu and ship is invoked in the same turn;
+  whether the merge waits for a human is `ship-config.json`'s call.
 - **One repo per PR.** A ticket may produce several PRs (e.g. backend + frontend);
   each gets its own work-on worktree, ship run, and merge.
 - **Squash merge only** — one clean commit on the default branch per PR.
