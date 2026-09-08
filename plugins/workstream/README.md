@@ -38,8 +38,8 @@ enforces its goal — see [Harness differences](#harness-differences) below.
 ## Prerequisites
 
 - **superpowers plugin** — the workflow hands off to its brainstorming,
-  writing-plans, using-git-worktrees, test-driven-development, and
-  finishing-a-development-branch skills. Available for both harnesses:
+  writing-plans, using-git-worktrees, test-driven-development, executing-plans
+  and subagent-driven-development skills. Available for both harnesses:
   `/plugin marketplace add obra/superpowers-marketplace` or
   `copilot plugin marketplace add obra/superpowers-marketplace`.
 - **jira-writer plugin** (this marketplace) — all Jira reads/writes go through

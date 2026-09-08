@@ -22,6 +22,15 @@ implement → **draft** PR → `ship` → `merge-pr`. The PR is opened as a draf
 CI (gated on `draft == false`) stays off during ship's self review; ship marks it
 ready-for-review — the single CI trigger — only once the review passes.
 
+**The reconciliation report is the one stop.** The user's go-ahead there authorises
+everything after it, through to `ship`'s hand-off to `merge-pr`. Nothing downstream
+ends the turn to ask "shall I continue?": brainstorm decisions are asked in one
+batch (Step 6), the draft PR opens without a menu (Step 7), and ship is invoked in
+the same turn the PR is created. Whether the merge itself waits for a human is
+ship's decision, from its auto-merge config — not a question work-on asks.
+Measured over a week of tickets, the questions this section removes idled sessions
+for one to four hours each, and every answer was the default.
+
 ## Steps
 
 **0. Resolve the ticket key.** Take it from the arguments (`PROJ-123` — any Jira
@@ -99,53 +108,77 @@ moved it; check the current status first.
 
 **6. Plan and implement.** Hand off to the normal superpowers flow:
 `superpowers:brainstorming` for design (restate the reconciliation findings from
-Step 2 as input there), then `superpowers:writing-plans`, then execute the plan (choosing inline vs subagents automatically — see below), then
-`superpowers:finishing-a-development-branch` to produce the PR. **For tickets with
-a UI surface:** the brainstorm must present design options as browser-rendered HTML
-mockups with 2–3 variants (ASCII mockups only if the user asks); and the **final
-implementation check, before the draft PR is opened, must drive the built UI in a
-real browser** (Playwright/e2e specs for the touched surface, or the `verify` skill)
-to confirm it renders and behaves as designed — green type-check/unit tests do not
-prove a UI works.
+Step 2 as input there), then `superpowers:writing-plans`, then execute the plan
+(choosing inline vs subagents automatically — see below). Step 7 opens the PR.
 
-**Choose the execution mode automatically — inline by default, subagents only when
-the plan earns it.** `superpowers:writing-plans` ends by offering an execution choice
-(subagent-driven vs inline). Do NOT ask the user, and do NOT reflexively pick
-subagents: subagent-driven runs an implementer **and** a reviewer per task and is
-markedly slower. Decide from the finished plan and state the decision in one line
-before executing.
+**Brainstorm questions go out in one batch.** Collect every decision the design
+needs before asking any of them, then ask them in a single `AskUserQuestion` call
+(it takes up to four questions; a fifth means a second call, never a third). Put
+your recommended option first in each. One question per round trip is the shape to
+avoid: each answer costs a wait, and a session that asks five questions in sequence
+has parked itself five times for the same information one call would have gathered.
+Ask a lone follow-up only when an answer genuinely changes what the next question is.
 
-**Default to inline** (`superpowers:executing-plans`) — the controller runs the plan
-in-session; fastest, and the plan already carries the full spec. **Escalate to
-subagent-driven** (`superpowers:subagent-driven-development`) only when holding the
-whole plan in one context would crowd it or hurt quality. Judge that — don't count
-files blindly — from:
+**For tickets with a UI surface:** present the design as a browser-rendered HTML
+mockup (ASCII only if the user asks). **One mockup, of the recommended design,**
+when the surface follows a pattern the app already has — a settings sub-group, a
+chip, a drawer section, another row in an existing table. **Two or three variants**
+only when the surface is new to the app, or when the user asks for variants — and
+then show them before writing any implementation. Then, the **final implementation
+check, before the draft PR is opened, must drive the built UI in a real browser**
+(Playwright/e2e specs for the touched surface, or the `verify` skill) to confirm it
+renders and behaves as designed — green type-check/unit tests do not prove a UI works.
 
-- **Task count** — more than ~5–6 tasks is a signal, not a hard cliff. A 7-task plan
-  of trivial mechanical edits can still run inline; a 4-task plan that rewrites core
-  modules warrants subagents.
-- **Context footprint** — assess the plan's File Structure: the number **and size**
-  of the files it creates/modifies, test files included, and how much code each task
-  carries. Escalate when running inline would balloon the controller's context and
-  risk a mid-run compaction. A handful of large modules with full sibling test suites
-  is far heavier than a dozen one-line edits — weigh the code, don't count files.
-- **Cross-cutting / high-risk** — one plan spanning multiple stacks or subsystems
-  (e.g. a schema/migration + API + UI change together), or touching
-  security/auth/concurrency/money paths where a fresh per-task adversarial review
-  materially lowers risk.
+**Inline is the execution mode.** `superpowers:writing-plans` ends by offering an
+execution choice (subagent-driven vs inline). Do NOT ask the user. Run the plan with
+`superpowers:executing-plans` — the controller implements in-session, and the plan
+already carries the full spec. Subagent-driven development runs an implementer
+**and** a reviewer per task, strictly in sequence, each starting cold; measured
+across a week of comparable tickets it took four to six times the wall-clock and
+five to eight times the cost of an inline run, and most of its per-task reviews found
+the same class of nit a single whole-branch review finds once. State the mode in one
+line before executing.
 
-The choice is **whole-plan** (one mode for the entire plan) and **announced**: e.g.
-"7 tasks across API+UI, heavy footprint → subagent-driven" or "3 mechanical tasks,
-4 small files → inline". Two hard overrides:
+**Escalate to `superpowers:subagent-driven-development` only when BOTH hold:**
 
-- **Tightly-coupled tasks** (one can't be implemented or reviewed without another in
-  the same edit) → **inline** regardless of size; subagent-driven assumes
-  mostly-independent tasks.
-- An explicit **user preference** in the request ("work on … inline" / "… with
-  subagents") **wins** over the rule.
+- The plan spans **two or more subsystems that share no test harness** — a main
+  process plus a renderer plus a live conformance suite, a migration plus an API plus
+  a UI — so that no single context can hold the whole change and its tests without
+  a mid-run compaction. One subsystem, however large, runs inline.
+- The change touches a path where a fresh adversarial reviewer per task lowers real
+  risk: security, auth, concurrency, money, a wire protocol. A settings page or a
+  config block does not qualify on its own.
 
-If you choose subagent-driven, apply the CWD contract below. If inline, the
-controller's own CWD is the worktree, so commits are safe and no contract is needed.
+Task count is not a criterion. A twelve-task plan of edits in one subsystem runs
+inline; a four-task plan across three subsystems with a security surface earns
+subagents. Two overrides stand: **tightly-coupled tasks** (one cannot be implemented
+or reviewed without another in the same edit) force inline regardless; an explicit
+**user preference** in the request ("work on … inline" / "… with subagents") wins
+over the rule.
+
+If you choose subagent-driven, apply the CWD contract and the loop limits below. If
+inline, the controller's own CWD is the worktree, so commits are safe and no
+contract is needed.
+
+**Subagent loop limits.** Superpowers' skill sets generous caps; this workflow
+tightens them, because the caps are where the hours went:
+
+- **Size every task to twenty minutes of implementer time.** A task an implementer
+  cannot finish in that span — "boot, tray and lifecycle" as one task — is two or
+  three tasks. Split it in the plan before dispatching, never mid-run.
+- **Two fix rounds per task, not five.** After the second scoped re-review still
+  leaves findings open, adjudicate them as the skill's breaker does: park with a
+  ruling, or rule and carry forward. A loop that has not converged in two rounds is
+  not converging.
+- **Skip the skill's final whole-branch review.** `ship`'s self code review is this
+  PR's whole-branch review: it reads the same diff, on the draft, and its fixes go
+  out in one batched push. Running both meant three reviews of one diff inside two
+  hours. Hand the ledger's deferred-minor and parked lines to ship's reviewer instead.
+- **Never poll a dispatched subagent.** Its result arrives as a task notification
+  the moment it stops. A `sleep N; git log` loop in the controller does not see that
+  notification until the sleep ends, so every poll overshoots by up to its own
+  length — one session lost seventy minutes to it. Between dispatches, do ledger
+  work or simply end the tool call and wait.
 
 **Subagent commits must land in the worktree, not the shared checkout.** If you
 execute the plan with `superpowers:subagent-driven-development`, mind a CWD gap: a
@@ -175,18 +208,34 @@ If you cannot guarantee that contract, execute the plan inline
 (`superpowers:executing-plans`) from the worktree session instead — the controller's
 own CWD is the worktree, so inline commits are always safe.
 
-**Create the PR as a draft** — `gh pr create --draft`.
-`superpowers:finishing-a-development-branch` is forge-neutral (it pushes the branch
-but leaves the `gh pr create` to you), so pass `--draft` explicitly; it will not add
-the flag on its own. CI is gated to skip draft PRs (`if: draft == false`), so ship's
-self review and its fix pushes run on the draft for **zero CI minutes**. Ship marks
-the PR ready-for-review only after the review passes — that single transition is what
-first triggers CI. Opening the PR ready instead burns a full CI run before the review
-has even started.
+**7. Open the draft PR and hand off to ship — in the same turn, with no menu.**
+Do not invoke `superpowers:finishing-a-development-branch` here. Its job is to ask
+"merge locally, push and create a PR, or keep as-is?", and in this workflow the
+answer is fixed: the user chose it at the reconciliation gate. Asking again parked
+one session for an hour and a half on a question with one answer. Do its
+verification yourself, then its Option 2, then continue:
 
-Once the (draft) PR exists, continue with the `ship` skill to drive it to merge —
-ship marks the PR ready after its self review and moves the ticket to In Review at
-that moment.
+1. **Run the full gate on the exact tree you are about to push**, from the
+   worktree: the repo's lint, type-check and unit suite (discover them from its
+   CLAUDE.md / `package.json` / `Makefile`); the e2e or browser check when the
+   change has a UI surface or crosses files with behaviour. Fix what fails. A red
+   gate here is the only thing that stops this step, and it stops it to fix, not
+   to ask.
+2. `git push -u origin <branch>` from the worktree.
+3. **Create the PR as a draft** — `gh pr create --draft`, with a body that
+   states what changed and how it was verified. CI is gated to skip draft PRs
+   (`if: draft == false`), so ship's self review and its fix pushes run on the
+   draft for **zero CI minutes**. Ship marks the PR ready-for-review only after
+   the review passes — that single transition is what first triggers CI.
+   Opening the PR ready instead burns a full CI run before the review has even
+   started.
+4. **Invoke the `ship` skill now**, in this same turn, with the repo-qualified
+   PR, the worktree path and the ticket key. Do not end the turn on "Draft PR
+   #N created" — that sentence was, in every measured session, followed by the
+   user typing "ship it" after a wait of forty minutes to three hours. Ship marks
+   the PR ready after its self review, moves the ticket to In Review at that
+   moment, and decides from its auto-merge config whether the merge waits for a
+   human. Leave the worktree in place: ship and merge-pr run from it.
 
 ## Red flags
 
@@ -205,6 +254,20 @@ that moment.
 - A branch name missing the ticket key → merge-pr can't find the ticket to close.
 - Opening the PR ready-for-review instead of a draft → CI runs before ship's self
   review even starts; always `gh pr create --draft` (ship marks it ready).
+- Invoking `finishing-a-development-branch` and presenting its menu, or ending the
+  turn on "draft PR created" → the go-ahead at the reconciliation gate already
+  answered both; push, open the draft, and invoke `ship` in the same turn.
+- Asking brainstorm questions one at a time → one `AskUserQuestion` call carries up
+  to four; batch them, recommended option first.
+- Two or three mockup variants for a surface the app already has a pattern for →
+  one mockup of the recommended design; variants are for new surfaces or on request.
+- Choosing subagent-driven development for a plan inside one subsystem, or because
+  it has many tasks → inline; subagents need two subsystems with no shared harness
+  AND a risk surface, both.
+- Sleep-polling a dispatched subagent (`sleep N; git log`) → its notification is
+  the wake-up; do ledger work or end the call and wait.
+- Running the skill's final whole-branch review and then ship's self review on the
+  same head → ship's is the whole-branch review; hand it the ledger's parked lines.
 - Dispatching subagent-driven-development implementers from a fallback worktree
   without pinning their CWD to `$WT` → their bare `git commit` lands on the base
   branch in the shared checkout, not the feature branch, and the work never reaches
