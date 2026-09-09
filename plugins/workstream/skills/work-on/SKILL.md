@@ -156,20 +156,54 @@ or reviewed without another in the same edit) force inline regardless; an explic
 **user preference** in the request ("work on … inline" / "… with subagents") wins
 over the rule.
 
-If you choose subagent-driven, apply the CWD contract and the loop limits below. If
-inline, the controller's own CWD is the worktree, so commits are safe and no
-contract is needed.
+If you choose subagent-driven, **mark every task in the plan risk-bearing or not
+before dispatching anything** — that marker is what the conditional per-task review
+below reads, and deciding it per task mid-run turns into "review everything." Then
+apply the CWD contract and the loop limits below. If inline, the controller's own
+CWD is the worktree, so commits are safe and no contract is needed.
 
 **Subagent loop limits.** Superpowers' skill sets generous caps; this workflow
-tightens them, because the caps are where the hours went:
+tightens them, because the caps are where the hours went. Three of these
+**override `subagent-driven-development`'s own instructions and its red-flag
+table** — that skill dispatches a task reviewer for every task and ends every fix
+round with a scoped re-review, and it calls skipping either one a defect. In this
+workflow it is not. When the two documents disagree, this section wins:
 
 - **Size every task to twenty minutes of implementer time.** A task an implementer
   cannot finish in that span — "boot, tray and lifecycle" as one task — is two or
   three tasks. Split it in the plan before dispatching, never mid-run.
-- **Two fix rounds per task, not five.** After the second scoped re-review still
-  leaves findings open, adjudicate them as the skill's breaker does: park with a
-  ruling, or rule and carry forward. A loop that has not converged in two rounds is
-  not converging.
+- **Re-split when the plan turns out to be wrong about size.** Estimates are made
+  before any task has run; the first two runs are the measurement. **Two
+  consecutive tasks over the twenty-minute target means every remaining estimate is
+  wrong** — stop and re-split what is left before the next dispatch. One measured
+  session's second task came back at forty minutes, its mean was fifty-one and its
+  worst a hundred and four; nothing re-sized, and fifteen serial tasks became
+  fourteen hours. Re-splitting mid-run is the one exception to the rule above.
+- **The per-task review is conditional.** Dispatching a fresh adversarial reviewer
+  for every task is what makes this mode expensive, and most of what it returns is
+  the class of nit one whole-branch review finds once. **Mark each task in the plan
+  risk-bearing or not** — a task is risk-bearing when it touches auth, a
+  credential, a wire format, concurrency, money, or a security predicate, or when
+  the plan's own brief calls it the riskiest thing in the plan. Only those get a
+  reviewer subagent. For the rest the controller adjudicates: read the task diff
+  yourself against the brief, take the implementer's own test evidence, and move
+  on. In one measured session all fifteen tasks were reviewed, and ship's
+  whole-branch review still returned a Critical afterwards, because the defect was
+  in a seam no per-task reviewer could see.
+- **One reviewer, one pass, no category fan-out.** A reviewed task gets exactly one
+  reviewer, scoped to that task's diff and its brief. Never dispatch parallel
+  reviewers by category (correctness, security, tests, performance) for a single
+  task. The deep multi-dimension pass belongs at the end, once, in `ship`'s self
+  review, where it reads the whole branch instead of one commit.
+- **No scoped re-review subagent.** A fix round is one fix dispatch, and it ends
+  there. Require the implementer to return **proof** with the fix — the mutation it
+  re-ran, or the test that now fails when the fix is reverted — and adjudicate that
+  proof yourself. Dispatching a third agent to re-read a diff you are holding is
+  the most expensive way to read it.
+- **Two fix rounds per task, not five.** After the second round still leaves
+  findings open, adjudicate them as the skill's breaker does: park with a ruling,
+  or rule and carry forward. A loop that has not converged in two rounds is not
+  converging.
 - **Skip the skill's final whole-branch review.** `ship`'s self code review is this
   PR's whole-branch review: it reads the same diff, on the draft, and its fixes go
   out in one batched push. Running both meant three reviews of one diff inside two
@@ -179,6 +213,14 @@ tightens them, because the caps are where the hours went:
   notification until the sleep ends, so every poll overshoots by up to its own
   length — one session lost seventy minutes to it. Between dispatches, do ledger
   work or simply end the tool call and wait.
+
+**Where the wall-clock actually goes, so the trade is clear.** A measured
+seventeen-hour subagent-driven session spent 7.4 hours on first-pass
+implementation, 5.5 hours on review-driven fix rounds inside the implementers, and
+1.3 hours on the reviewer and re-reviewer agents themselves. Human waits totalled
+about an hour and the controller was idle twenty-nine minutes out of eight hundred
+and fifty-three, so there was no stalling left to remove: the review chain was
+48% of the implementation window, and it is the only thing left worth cutting.
 
 **Subagent commits must land in the worktree, not the shared checkout.** If you
 execute the plan with `superpowers:subagent-driven-development`, mind a CWD gap: a
@@ -268,6 +310,18 @@ verification yourself, then its Option 2, then continue:
   the wake-up; do ledger work or end the call and wait.
 - Running the skill's final whole-branch review and then ship's self review on the
   same head → ship's is the whole-branch review; hand it the ledger's parked lines.
+- Dispatching a task reviewer for **every** task because `subagent-driven-development`
+  says to → only tasks the plan marks risk-bearing; adjudicate the rest yourself
+  from the diff. This section overrides that skill.
+- Dispatching a scoped re-review subagent after a fix round → the implementer
+  returns the mutation or the reverted-fix failure as proof, and you adjudicate it.
+  A third agent re-reading a diff you are already holding buys nothing.
+- Fanning reviewers out by category (correctness, security, tests, performance) on
+  one task's diff → one reviewer per reviewed task; the multi-dimension pass is
+  ship's self review, once, on the whole branch.
+- Carrying on with the plan's remaining task sizes after two tasks in a row overran
+  the twenty-minute target → the estimates are measured wrong; re-split the
+  remainder before the next dispatch.
 - Dispatching subagent-driven-development implementers from a fallback worktree
   without pinning their CWD to `$WT` → their bare `git commit` lands on the base
   branch in the shared checkout, not the feature branch, and the work never reaches

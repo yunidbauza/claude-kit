@@ -176,6 +176,18 @@ SDD ledger's deferred-minor and parked-with-ruling lines when there was one, the
 plan's Global Constraints otherwise. A review that never saw the parked list will
 re-find it or, worse, miss what the ruling was covering for.
 
+**This is also the only place the deep, multi-dimension pass belongs.** `work-on`
+keeps the per-task reviews lean on purpose — conditional, one reviewer, no
+category fan-out — on the understanding that the thorough pass happens here,
+once, against the whole branch. So do not economise here: give the review the
+most capable model, the full diff rather than a sample, and enough effort to
+cover correctness, security, tests and the seams between tasks. Seams are the
+point. In a measured session where all fifteen tasks had been individually
+reviewed, this step still returned a Critical, because the defect lived between
+two commits that were each correct on their own and no per-task reviewer ever saw
+both. Whether the implementation phase used subagents or ran inline, this review
+reads the branch as a whole.
+
 **Pin the subagent's target explicitly.** It inherits no directory from this
 session, so its prompt must open with the workspace and repo, and instruct it to
 verify before reviewing:

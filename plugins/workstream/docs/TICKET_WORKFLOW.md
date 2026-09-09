@@ -9,12 +9,14 @@ Each is independently invocable; together they chain end to end:
    │  isolated worktree off the default branch (fetched fresh)
    ▼
 superpowers: brainstorming (one batched question round) → writing-plans →
-   │  executing-plans inline (subagent-driven only for multi-subsystem + risk)
+   │  executing-plans inline (subagent-driven only for multi-subsystem + risk;
+   │    then per-task review is conditional and lean, one reviewer, no re-review)
    │  full gate on the exact tree → push → draft PR → ship, all in one turn
    ▼
 /workstream:ship [PR] [--auto-merge]
    │  ticket → In Review (open non-draft PR, jira-writer)
-   │  CI green → self review (code-review, subagent)
+   │  CI green → self review (code-review, subagent) — the one deep whole-branch
+   │    pass; the per-task reviews stayed lean so this one carries the weight
    │  findings loop (review-pr-findings, subagent)
    │  watch loop: new findings / sync base branch / approval (~20 min wakeups)
    │  (--auto-merge: skip the wait — findings resolved + CI green ⇒ approved,
